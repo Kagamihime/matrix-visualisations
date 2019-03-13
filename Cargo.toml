@@ -1,0 +1,7 @@
+[package]
+name = "matrix-visualisations"
+version = "0.0.1"
+authors = ["Eisha Chen-yen-su <chenyensu0@gmail.com>"]
+edition = "2018"
+
+[dependencies]
