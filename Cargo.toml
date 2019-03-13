@@ -5,3 +5,4 @@ authors = ["Eisha Chen-yen-su <chenyensu0@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+petgraph = "0.4.*"
