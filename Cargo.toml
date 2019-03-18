@@ -5,6 +5,8 @@ authors = ["Eisha Chen-yen-su <chenyensu0@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+failure = "0.1"
 petgraph = "0.4.*"
-url = "1.7.*"
+serde = "1"
+serde_derive = "1"
 yew = { git = "https://github.com/DenisKolodin/yew" }
