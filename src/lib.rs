@@ -1,6 +1,7 @@
 extern crate failure;
 extern crate petgraph;
 extern crate serde_derive;
+extern crate serde_json;
 extern crate yew;
 
 mod cs_backend;
@@ -12,14 +13,19 @@ use yew::services::{ConsoleService, FetchService};
 use yew::{html, Callback, Component, ComponentLink, Html, Renderable, ShouldRender};
 
 use cs_backend::authentication::ConnectionResponse;
+use cs_backend::events::SyncResponse;
 use cs_backend::session::Session;
 
 pub struct Model {
     console: ConsoleService,
     fetch: FetchService,
+    link: ComponentLink<Self>,
 
     connection_callback: Callback<Result<ConnectionResponse, Error>>,
     connection_task: Option<FetchTask>,
+
+    sync_callback: Callback<Result<SyncResponse, Error>>,
+    sync_task: Option<FetchTask>,
 
     disconnection_callback: Callback<Result<(), Error>>,
     disconnection_task: Option<FetchTask>,
@@ -35,10 +41,14 @@ pub enum Msg {
     Password(html::ChangeData),
 
     Connect,
+    Sync,
     Disconnect,
 
-    Connected(cs_backend::authentication::ConnectionResponse),
+    Connected(ConnectionResponse),
     ConnectionFailed,
+
+    Synced(SyncResponse),
+    SyncFailed,
 
     Disconnected,
     DisconnectionFailed,
@@ -61,13 +71,19 @@ impl Component for Model {
             }),
             connection_task: None,
 
-            disconnection_callback: link.send_back(|response: Result<(), Error>| {
-                match response {
-                    Ok(_) => Msg::Disconnected,
-                    Err(_) => Msg::DisconnectionFailed,
-                }
+            sync_callback: link.send_back(|response: Result<SyncResponse, Error>| match response {
+                Ok(res) => Msg::Synced(res),
+                Err(_) => Msg::SyncFailed,
+            }),
+            sync_task: None,
+
+            disconnection_callback: link.send_back(|response: Result<(), Error>| match response {
+                Ok(_) => Msg::Disconnected,
+                Err(_) => Msg::DisconnectionFailed,
             }),
             disconnection_task: None,
+
+            link,
 
             session: Session::empty(),
         }
@@ -96,13 +112,19 @@ impl Component for Model {
                 }
             }
             Msg::Connect => {
+                self.console.log("Connecting...");
+
                 let task = self.connect(self.connection_callback.clone());
                 self.connection_task = Some(task);
+            }
+            Msg::Sync => {
+                self.console.log("Syncing...");
 
-                self.console.log(&format!("Info: {:?}", self.session));
+                let task = self.sync(self.sync_callback.clone());
+                self.sync_task = Some(task);
             }
             Msg::Disconnect => {
-                self.console.log("Disconnecting");
+                self.console.log("Disconnecting...");
 
                 let task = self.disconnect(self.disconnection_callback.clone());
                 self.disconnection_task = Some(task);
@@ -119,11 +141,25 @@ impl Component for Model {
                 ));
 
                 self.connection_task = None;
+
+                self.link.send_back(|_: ()| Msg::Sync).emit(());
             }
             Msg::ConnectionFailed => {
                 self.console.log("Connection failed");
 
                 self.connection_task = None;
+            }
+            Msg::Synced(res) => {
+                // TODO: Fill events DAG from here
+                self.console
+                    .log(&serde_json::to_string_pretty(&res.rooms.join).unwrap());
+
+                self.sync_task = None;
+            }
+            Msg::SyncFailed => {
+                self.console.log("Could not sync");
+
+                self.sync_task = None;
             }
             Msg::Disconnected => {
                 self.console.log("Disconnected");
