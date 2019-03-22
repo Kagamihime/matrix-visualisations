@@ -153,15 +153,17 @@ impl Component for Model {
                 self.connection_task = None;
             }
             Msg::Synced(res) => {
-                // TODO: Fill events DAG from here
                 self.events_dag = model::dag::RoomEvents::from_sync_response(
                     &self.session.room_id,
                     &self.session.server_name,
                     res,
                 );
 
-                match self.events_dag {
-                    Some(_) => self.console.log("Events DAG built!"),
+                match &self.events_dag {
+                    Some(dag) => {
+                        self.console.log("Events DAG built!");
+                        self.console.log(&dag.to_dot());
+                    }
                     None => self.console.log("Failed to build the DAG"),
                 }
 
