@@ -15,6 +15,7 @@ use yew::{html, Callback, Component, ComponentLink, Html, Renderable, ShouldRend
 use cs_backend::authentication::ConnectionResponse;
 use cs_backend::events::SyncResponse;
 use cs_backend::session::Session;
+use model::dag::RoomEvents;
 
 pub struct Model {
     console: ConsoleService,
@@ -31,6 +32,7 @@ pub struct Model {
     disconnection_task: Option<FetchTask>,
 
     session: Session,
+    events_dag: Option<RoomEvents>,
 }
 
 pub enum Msg {
@@ -86,6 +88,7 @@ impl Component for Model {
             link,
 
             session: Session::empty(),
+            events_dag: None,
         }
     }
 
@@ -151,8 +154,16 @@ impl Component for Model {
             }
             Msg::Synced(res) => {
                 // TODO: Fill events DAG from here
-                self.console
-                    .log(&serde_json::to_string_pretty(&res.rooms.join).unwrap());
+                self.events_dag = model::dag::RoomEvents::from_sync_response(
+                    &self.session.room_id,
+                    &self.session.server_name,
+                    res,
+                );
+
+                match self.events_dag {
+                    Some(_) => self.console.log("Events DAG built!"),
+                    None => self.console.log("Failed to build the DAG"),
+                }
 
                 self.sync_task = None;
             }
