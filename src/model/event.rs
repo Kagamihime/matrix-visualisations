@@ -16,6 +16,23 @@ pub struct Event {
     pub event_id: String,        // The event ID
 }
 
+impl Event {
+    /// This function is needed because the content of a the `prev_events` field can change
+    /// across the versions of rooms
+    pub fn get_prev_events(&self) -> Vec<&str> {
+        self.prev_events
+            .iter()
+            .map(|prev_ev| {
+                if prev_ev.is_array() {
+                    prev_ev[0].as_str().unwrap()
+                } else {
+                    prev_ev.as_str().unwrap()
+                }
+            })
+            .collect()
+    }
+}
+
 impl PartialOrd for Event {
     fn partial_cmp(&self, other: &Event) -> Option<Ordering> {
         if self.depth == other.depth {
