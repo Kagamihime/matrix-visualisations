@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use petgraph::dot::{Config, Dot};
 use petgraph::graph::{Graph, NodeIndex};
 use petgraph::Directed;
 
@@ -120,5 +121,9 @@ impl RoomEvents {
             }
             None => None,
         }
+    }
+
+    pub fn to_dot(&self) -> String {
+        format!("{:?}", Dot::with_config(&self.dag, &[Config::EdgeNoLabel]))
     }
 }
