@@ -1,9 +1,10 @@
 use std::cmp::Ordering;
+use std::fmt;
 
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+#[derive(Default, Clone, Deserialize, Serialize)]
 pub struct Event {
     room_id: String,       // Room identifier
     sender: String,        // The ID of the user sending the event
@@ -60,3 +61,9 @@ impl PartialEq for Event {
 }
 
 impl Eq for Event {}
+
+impl fmt::Debug for Event {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Event ID: {}", self.event_id)
+    }
+}
