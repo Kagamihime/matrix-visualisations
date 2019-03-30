@@ -64,6 +64,10 @@ impl Eq for Event {}
 
 impl fmt::Debug for Event {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Event ID: {}", self.event_id)
+        write!(
+            f,
+            "Sender: {}\\nType: {}\\nDepth: {}\\nEvent ID: {}",
+            self.sender, self.etype, self.depth, self.event_id
+        )
     }
 }
