@@ -74,7 +74,10 @@ impl Model {
             .header("Content-Type", "application/json")
             .header(
                 "Authorization",
-                format!("Bearer {}", self.session.access_token.as_ref().unwrap()),
+                format!(
+                    "Bearer {}",
+                    self.session.access_token.as_ref().expect("No access token")
+                ),
             )
             .body(Nothing)
             .expect("Failed to build request.");
