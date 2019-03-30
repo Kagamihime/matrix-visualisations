@@ -1,11 +1,16 @@
+#![recursion_limit = "128"]
+
 extern crate failure;
 extern crate petgraph;
 extern crate serde_derive;
 extern crate serde_json;
+#[macro_use]
+extern crate stdweb;
 extern crate yew;
 
 mod cs_backend;
 mod model;
+mod visjs;
 
 use failure::Error;
 use yew::services::fetch::FetchTask;
@@ -16,10 +21,12 @@ use cs_backend::authentication::ConnectionResponse;
 use cs_backend::events::SyncResponse;
 use cs_backend::session::Session;
 use model::dag::RoomEvents;
+use visjs::VisJsService;
 
 pub struct Model {
     console: ConsoleService,
     fetch: FetchService,
+    vis: VisJsService,
     link: ComponentLink<Self>,
 
     connection_callback: Callback<Result<ConnectionResponse, Error>>,
@@ -64,6 +71,7 @@ impl Component for Model {
         Model {
             console: ConsoleService::new(),
             fetch: FetchService::new(),
+            vis: VisJsService::new(),
 
             connection_callback: link.send_back(|response: Result<ConnectionResponse, Error>| {
                 match response {
@@ -129,8 +137,18 @@ impl Component for Model {
             Msg::Disconnect => {
                 self.console.log("Disconnecting...");
 
-                let task = self.disconnect(self.disconnection_callback.clone());
-                self.disconnection_task = Some(task);
+                // FIXME
+                self.vis.display_dag("#dag-vis");
+
+                match self.session.access_token {
+                    None => {
+                        self.console.log("You were not connected");
+                    }
+                    Some(_) => {
+                        let task = self.disconnect(self.disconnection_callback.clone());
+                        self.disconnection_task = Some(task);
+                    }
+                }
             }
             Msg::Connected(res) => {
                 self.session.user_id = res.user_id;
@@ -206,6 +224,9 @@ impl Renderable<Model> for Model {
 
                 <li><button onclick=|_| Msg::Disconnect,>{ "Disconnect" }</button></li>
             </ul>
+
+            <section id="dag-vis",>
+            </section>
         }
     }
 }
