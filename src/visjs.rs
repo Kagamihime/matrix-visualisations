@@ -2,6 +2,8 @@ use stdweb::web;
 use stdweb::web::IParentNode;
 use stdweb::Value;
 
+use crate::model::dag::RoomEvents;
+
 #[derive(Default)]
 pub struct VisJsService(Option<Value>);
 
@@ -14,8 +16,10 @@ impl VisJsService {
         VisJsService(Some(lib))
     }
 
-    pub fn display_dag(&self, id: &str) {
+    pub fn display_dag(&self, events_dag: &RoomEvents, id: &str) {
         let lib = self.0.as_ref().expect("vis library object lost");
+
+        let dot_string = events_dag.to_dot();
 
         let container = web::document()
             .query_selector(id)
@@ -25,8 +29,7 @@ impl VisJsService {
         js! { @(no_return)
             var vis = @{lib};
 
-            var DOTstring = "dinetwork {1 -> 1 -> 2; 2 -> 3; 2 -- 4; 2 -> 1 }";
-            var parsedData = vis.network.convertDot(DOTstring);
+            var parsedData = vis.network.convertDot(@{dot_string});
 
             var data = {
                 nodes: parsedData.nodes,
@@ -34,6 +37,9 @@ impl VisJsService {
             };
 
             var options = parsedData.options;
+            options.edges = {
+                length: 500
+            };
 
             var network = new vis.Network(@{container}, data, options);
         };

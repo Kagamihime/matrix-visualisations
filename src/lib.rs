@@ -137,9 +137,6 @@ impl Component for Model {
             Msg::Disconnect => {
                 self.console.log("Disconnecting...");
 
-                // FIXME
-                self.vis.display_dag("#dag-vis");
-
                 match self.session.access_token {
                     None => {
                         self.console.log("You were not connected");
@@ -181,6 +178,8 @@ impl Component for Model {
                     Some(dag) => {
                         self.console.log("Events DAG built!");
                         self.console.log(&dag.to_dot());
+
+                        self.vis.display_dag(dag, "#dag-vis");
                     }
                     None => self.console.log("Failed to build the DAG"),
                 }
@@ -220,9 +219,10 @@ impl Renderable<Model> for Model {
 
                 <li>{ "Password: " }<input type="password", onchange=|e| Msg::Password(e),/></li>
 
-                <li><button onclick=|_| Msg::Connect,>{ "Connect" }</button></li>
-
-                <li><button onclick=|_| Msg::Disconnect,>{ "Disconnect" }</button></li>
+                <li>
+                    <button onclick=|_| Msg::Connect,>{ "Connect" }</button>
+                    <button onclick=|_| Msg::Disconnect,>{ "Disconnect" }</button>
+                </li>
             </ul>
 
             <section id="dag-vis",>
