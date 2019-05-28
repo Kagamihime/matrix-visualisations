@@ -5,7 +5,7 @@ use petgraph::graph::{Graph, NodeIndex};
 use petgraph::Directed;
 
 use super::event::Event;
-use crate::cs_backend::events::SyncResponse;
+use crate::cs_backend::backend::SyncResponse;
 
 pub struct RoomEvents {
     room_id: String,     // The ID of the room

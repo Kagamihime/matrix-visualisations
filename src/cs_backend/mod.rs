@@ -1,4 +1,2 @@
-pub mod authentication;
-pub mod events;
-pub mod rooms;
+pub mod backend;
 pub mod session;

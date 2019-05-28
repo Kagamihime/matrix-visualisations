@@ -12,21 +12,22 @@ mod cs_backend;
 mod model;
 mod visjs;
 
+use std::sync::{Arc, RwLock};
+
 use failure::Error;
 use yew::services::fetch::FetchTask;
-use yew::services::{ConsoleService, FetchService};
+use yew::services::ConsoleService;
 use yew::{html, Callback, Component, ComponentLink, Html, Renderable, ShouldRender};
 
-use cs_backend::authentication::ConnectionResponse;
-use cs_backend::events::{MessagesResponse, SyncResponse};
-use cs_backend::rooms::JoinedRooms;
+use cs_backend::backend::{
+    CSBackend, ConnectionResponse, JoinedRooms, MessagesResponse, SyncResponse,
+};
 use cs_backend::session::Session;
 use model::dag::RoomEvents;
 use visjs::VisJsService;
 
 pub struct Model {
     console: ConsoleService,
-    fetch: FetchService,
     vis: VisJsService,
     link: ComponentLink<Self>,
 
@@ -48,7 +49,8 @@ pub struct Model {
     disconnection_callback: Callback<Result<(), Error>>,
     disconnection_task: Option<FetchTask>,
 
-    session: Session,
+    cs_backend: CSBackend,
+    session: Arc<RwLock<Session>>,
     events_dag: Option<RoomEvents>,
 }
 
@@ -96,9 +98,10 @@ impl Component for Model {
     type Properties = ();
 
     fn create(_: Self::Properties, mut link: ComponentLink<Self>) -> Self {
+        let new_session = Arc::new(RwLock::new(Session::empty()));
+
         Model {
             console: ConsoleService::new(),
-            fetch: FetchService::new(),
             vis: VisJsService::new(),
 
             connection_callback: link.send_back(|response: Result<ConnectionResponse, Error>| {
@@ -148,7 +151,8 @@ impl Component for Model {
 
             link,
 
-            session: Session::empty(),
+            cs_backend: CSBackend::with_session(new_session.clone()),
+            session: new_session,
             events_dag: None,
         }
     }
@@ -169,22 +173,22 @@ impl Model {
         match event {
             UIEvent::ServerName(sn) => {
                 if let html::ChangeData::Value(sn) = sn {
-                    self.session.server_name = sn;
+                    self.session.write().unwrap().server_name = sn;
                 }
             }
             UIEvent::RoomId(ri) => {
                 if let html::ChangeData::Value(ri) = ri {
-                    self.session.room_id = ri;
+                    self.session.write().unwrap().room_id = ri;
                 }
             }
             UIEvent::Username(u) => {
                 if let html::ChangeData::Value(u) = u {
-                    self.session.username = u;
+                    self.session.write().unwrap().username = u;
                 }
             }
             UIEvent::Password(p) => {
                 if let html::ChangeData::Value(p) = p {
-                    self.session.password = p;
+                    self.session.write().unwrap().password = p;
                 }
             }
         }
@@ -204,25 +208,39 @@ impl Model {
 
         match cmd {
             BkCommand::Connect => {
-                self.connection_task = Some(self.connect(self.connection_callback.clone()))
+                self.connection_task =
+                    Some(self.cs_backend.connect(self.connection_callback.clone()))
             }
             BkCommand::ListRooms => {
-                self.listing_rooms_task = Some(self.list_rooms(self.listing_rooms_callback.clone()))
+                self.listing_rooms_task = Some(
+                    self.cs_backend
+                        .list_rooms(self.listing_rooms_callback.clone()),
+                )
             }
             BkCommand::JoinRoom => {
-                self.joining_room_task = Some(self.join_room(self.joining_room_callback.clone()))
+                self.joining_room_task = Some(
+                    self.cs_backend
+                        .join_room(self.joining_room_callback.clone()),
+                )
             }
-            BkCommand::Sync => self.sync_task = Some(self.sync(self.sync_callback.clone())),
+            BkCommand::Sync => {
+                self.sync_task = Some(self.cs_backend.sync(self.sync_callback.clone()))
+            }
             BkCommand::MoreMsg => {
-                self.more_msg_task = Some(self.get_prev_messages(self.more_msg_callback.clone()))
+                self.more_msg_task = Some(
+                    self.cs_backend
+                        .get_prev_messages(self.more_msg_callback.clone()),
+                )
             }
-            BkCommand::Disconnect => match self.session.access_token {
+            BkCommand::Disconnect => match self.session.read().unwrap().access_token {
                 None => {
                     self.console.log("You were not connected");
                 }
                 Some(_) => {
-                    self.disconnection_task =
-                        Some(self.disconnect(self.disconnection_callback.clone()));
+                    self.disconnection_task = Some(
+                        self.cs_backend
+                            .disconnect(self.disconnection_callback.clone()),
+                    );
                 }
             },
         }
@@ -233,14 +251,16 @@ impl Model {
             BkResponse::Connected(res) => {
                 self.connection_task = None;
 
-                self.session.user_id = res.user_id;
-                self.session.access_token = Some(res.access_token);
-                self.session.device_id = Some(res.device_id);
+                let mut session = self.session.write().unwrap();
+
+                session.user_id = res.user_id;
+                session.access_token = Some(res.access_token);
+                session.device_id = Some(res.device_id);
 
                 self.console.log(&format!(
                     "Connected with token: {} and as {}",
-                    self.session.access_token.as_ref().unwrap(),
-                    self.session.device_id.as_ref().unwrap()
+                    session.access_token.as_ref().unwrap(),
+                    session.device_id.as_ref().unwrap()
                 ));
 
                 self.link
@@ -252,7 +272,10 @@ impl Model {
 
                 self.listing_rooms_task = None;
 
-                if res.joined_rooms.contains(&self.session.room_id) {
+                if res
+                    .joined_rooms
+                    .contains(&self.session.read().unwrap().room_id)
+                {
                     self.link
                         .send_back(|_: ()| Msg::BkCmd(BkCommand::Sync))
                         .emit(());
@@ -274,17 +297,19 @@ impl Model {
             BkResponse::Synced(res) => {
                 self.sync_task = None;
 
-                self.session.next_batch_token = Some(res.next_batch.clone());
+                let mut session = self.session.write().unwrap();
 
-                if self.session.prev_batch_token.is_none() {
-                    if let Some(room) = res.rooms.join.get(&self.session.room_id) {
-                        self.session.prev_batch_token = room.timeline.prev_batch.clone();
+                session.next_batch_token = Some(res.next_batch.clone());
+
+                if session.prev_batch_token.is_none() {
+                    if let Some(room) = res.rooms.join.get(&session.room_id) {
+                        session.prev_batch_token = room.timeline.prev_batch.clone();
                     }
                 }
 
                 self.events_dag = model::dag::RoomEvents::from_sync_response(
-                    &self.session.room_id,
-                    &self.session.server_name,
+                    &session.room_id,
+                    &session.server_name,
                     res,
                 );
 
@@ -306,7 +331,7 @@ impl Model {
             BkResponse::MsgGot(res) => {
                 self.more_msg_task = None;
 
-                self.session.prev_batch_token = Some(res.end);
+                self.session.write().unwrap().prev_batch_token = Some(res.end);
 
                 self.console.log("Previous messages:");
 
