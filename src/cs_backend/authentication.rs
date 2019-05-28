@@ -88,7 +88,7 @@ impl Model {
             if meta.status.is_success() {
                 callback.emit(Ok(()))
             } else {
-                callback.emit(Err(format_err!("{}: error connecting", meta.status)))
+                callback.emit(Err(format_err!("{}: error disconnecting", meta.status)))
             }
         };
 
