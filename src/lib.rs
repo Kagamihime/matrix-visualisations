@@ -50,31 +50,38 @@ pub struct Model {
 }
 
 pub enum Msg {
+    UI(UIEvent),
+    BkCmd(BkCommand),
+    BkRes(BkResponse),
+}
+
+pub enum UIEvent {
     ServerName(html::ChangeData),
     RoomId(html::ChangeData),
 
     Username(html::ChangeData),
     Password(html::ChangeData),
+}
 
+pub enum BkCommand {
     Connect,
     ListRooms,
     JoinRoom,
     Sync,
     Disconnect,
+}
 
+pub enum BkResponse {
     Connected(ConnectionResponse),
-    ConnectionFailed,
-
-    ListedRooms(JoinedRooms),
-    ListingRoomsFailed,
-
+    RoomsList(JoinedRooms),
     RoomJoined,
-    RoomJoiningFailed,
-
     Synced(SyncResponse),
-    SyncFailed,
-
     Disconnected,
+
+    ConnectionFailed,
+    ListingRoomsFailed,
+    JoiningRoomFailed,
+    SyncFailed,
     DisconnectionFailed,
 }
 
@@ -90,38 +97,38 @@ impl Component for Model {
 
             connection_callback: link.send_back(|response: Result<ConnectionResponse, Error>| {
                 match response {
-                    Ok(res) => Msg::Connected(res),
-                    Err(_) => Msg::ConnectionFailed,
+                    Ok(res) => Msg::BkRes(BkResponse::Connected(res)),
+                    Err(_) => Msg::BkRes(BkResponse::ConnectionFailed),
                 }
             }),
             connection_task: None,
 
             listing_rooms_callback: link.send_back(|response: Result<JoinedRooms, Error>| {
                 match response {
-                    Ok(res) => Msg::ListedRooms(res),
+                    Ok(res) => Msg::BkRes(BkResponse::RoomsList(res)),
                     Err(e) => {
                         ConsoleService::new().log(&format!("{}", e));
-                        Msg::ListingRoomsFailed
+                        Msg::BkRes(BkResponse::ListingRoomsFailed)
                     }
                 }
             }),
             listing_rooms_task: None,
 
             joining_room_callback: link.send_back(|response: Result<(), Error>| match response {
-                Ok(_) => Msg::RoomJoined,
-                Err(_) => Msg::RoomJoiningFailed,
+                Ok(_) => Msg::BkRes(BkResponse::RoomJoined),
+                Err(_) => Msg::BkRes(BkResponse::JoiningRoomFailed),
             }),
             joining_room_task: None,
 
             sync_callback: link.send_back(|response: Result<SyncResponse, Error>| match response {
-                Ok(res) => Msg::Synced(res),
-                Err(_) => Msg::SyncFailed,
+                Ok(res) => Msg::BkRes(BkResponse::Synced(res)),
+                Err(_) => Msg::BkRes(BkResponse::SyncFailed),
             }),
             sync_task: None,
 
             disconnection_callback: link.send_back(|response: Result<(), Error>| match response {
-                Ok(_) => Msg::Disconnected,
-                Err(_) => Msg::DisconnectionFailed,
+                Ok(_) => Msg::BkRes(BkResponse::Disconnected),
+                Err(_) => Msg::BkRes(BkResponse::DisconnectionFailed),
             }),
             disconnection_task: None,
 
@@ -134,64 +141,80 @@ impl Component for Model {
 
     fn update(&mut self, msg: Self::Message) -> ShouldRender {
         match msg {
-            Msg::ServerName(sn) => {
+            Msg::UI(ui) => self.process_ui_event(ui),
+            Msg::BkCmd(cmd) => self.process_bk_command(cmd),
+            Msg::BkRes(res) => self.process_bk_response(res),
+        }
+
+        true
+    }
+}
+
+impl Model {
+    fn process_ui_event(&mut self, event: UIEvent) {
+        match event {
+            UIEvent::ServerName(sn) => {
                 if let html::ChangeData::Value(sn) = sn {
                     self.session.server_name = sn;
                 }
             }
-            Msg::RoomId(ri) => {
+            UIEvent::RoomId(ri) => {
                 if let html::ChangeData::Value(ri) = ri {
                     self.session.room_id = ri;
                 }
             }
-            Msg::Username(u) => {
+            UIEvent::Username(u) => {
                 if let html::ChangeData::Value(u) = u {
                     self.session.username = u;
                 }
             }
-            Msg::Password(p) => {
+            UIEvent::Password(p) => {
                 if let html::ChangeData::Value(p) = p {
                     self.session.password = p;
                 }
             }
-            Msg::Connect => {
-                self.console.log("Connecting...");
+        }
+    }
 
-                let task = self.connect(self.connection_callback.clone());
-                self.connection_task = Some(task);
+    fn process_bk_command(&mut self, cmd: BkCommand) {
+        let console_msg = match cmd {
+            BkCommand::Connect => "Connecting...",
+            BkCommand::ListRooms => "Listing joined rooms...",
+            BkCommand::JoinRoom => "Joining the room...",
+            BkCommand::Sync => "Syncing...",
+            BkCommand::Disconnect => "Disconnecting...",
+        };
+
+        self.console.log(console_msg);
+
+        match cmd {
+            BkCommand::Connect => {
+                self.connection_task = Some(self.connect(self.connection_callback.clone()))
             }
-            Msg::ListRooms => {
-                self.console.log("Listing joined rooms...");
-
-                let task = self.list_rooms(self.listing_rooms_callback.clone());
-                self.listing_rooms_task = Some(task);
+            BkCommand::ListRooms => {
+                self.listing_rooms_task = Some(self.list_rooms(self.listing_rooms_callback.clone()))
             }
-            Msg::JoinRoom => {
-                self.console.log("Joining the room...");
-
-                let task = self.join_room(self.joining_room_callback.clone());
-                self.joining_room_task = Some(task);
+            BkCommand::JoinRoom => {
+                self.joining_room_task = Some(self.join_room(self.joining_room_callback.clone()))
             }
-            Msg::Sync => {
-                self.console.log("Syncing...");
-
-                let task = self.sync(self.sync_callback.clone());
-                self.sync_task = Some(task);
-            }
-            Msg::Disconnect => {
-                self.console.log("Disconnecting...");
-
-                match self.session.access_token {
-                    None => {
-                        self.console.log("You were not connected");
-                    }
-                    Some(_) => {
-                        let task = self.disconnect(self.disconnection_callback.clone());
-                        self.disconnection_task = Some(task);
-                    }
+            BkCommand::Sync => self.sync_task = Some(self.sync(self.sync_callback.clone())),
+            BkCommand::Disconnect => match self.session.access_token {
+                None => {
+                    self.console.log("You were not connected");
                 }
-            }
-            Msg::Connected(res) => {
+                Some(_) => {
+                    self.disconnection_task =
+                        Some(self.disconnect(self.disconnection_callback.clone()));
+                }
+            },
+        }
+    }
+
+    fn process_bk_response(&mut self, res: BkResponse) {
+        match res {
+            BkResponse::Connected(res) => {
+                self.connection_task = None;
+
                 self.session.user_id = res.user_id;
                 self.session.access_token = Some(res.access_token);
                 self.session.device_id = Some(res.device_id);
@@ -202,44 +225,37 @@ impl Component for Model {
                     self.session.device_id.as_ref().unwrap()
                 ));
 
-                self.connection_task = None;
-
-                self.link.send_back(|_: ()| Msg::ListRooms).emit(());
+                self.link
+                    .send_back(|_: ()| Msg::BkCmd(BkCommand::ListRooms))
+                    .emit(());
             }
-            Msg::ConnectionFailed => {
-                self.console.log("Connection failed");
-
-                self.connection_task = None;
-            }
-            Msg::ListedRooms(res) => {
+            BkResponse::RoomsList(res) => {
                 self.console.log("Looking up in joined rooms");
 
                 self.listing_rooms_task = None;
 
                 if res.joined_rooms.contains(&self.session.room_id) {
-                    self.link.send_back(|_: ()| Msg::Sync).emit(());
+                    self.link
+                        .send_back(|_: ()| Msg::BkCmd(BkCommand::Sync))
+                        .emit(());
                 } else {
-                    self.link.send_back(|_: ()| Msg::JoinRoom).emit(());
+                    self.link
+                        .send_back(|_: ()| Msg::BkCmd(BkCommand::JoinRoom))
+                        .emit(());
                 }
             }
-            Msg::ListingRoomsFailed => {
-                self.console.log("Failed to get the list of joined rooms");
-
-                self.listing_rooms_task = None;
-            }
-            Msg::RoomJoined => {
+            BkResponse::RoomJoined => {
                 self.console.log("Room joined!");
 
                 self.joining_room_task = None;
 
-                self.link.send_back(|_: ()| Msg::Sync).emit(());
+                self.link
+                    .send_back(|_: ()| Msg::BkCmd(BkCommand::Sync))
+                    .emit(());
             }
-            Msg::RoomJoiningFailed => {
-                self.console.log("Failed to join the room");
+            BkResponse::Synced(res) => {
+                self.sync_task = None;
 
-                self.joining_room_task = None;
-            }
-            Msg::Synced(res) => {
                 self.events_dag = model::dag::RoomEvents::from_sync_response(
                     &self.session.room_id,
                     &self.session.server_name,
@@ -255,27 +271,38 @@ impl Component for Model {
                     }
                     None => self.console.log("Failed to build the DAG"),
                 }
-
-                self.sync_task = None;
             }
-            Msg::SyncFailed => {
-                self.console.log("Could not sync");
-
-                self.sync_task = None;
-            }
-            Msg::Disconnected => {
+            BkResponse::Disconnected => {
                 self.console.log("Disconnected");
 
                 self.disconnection_task = None;
             }
-            Msg::DisconnectionFailed => {
+            BkResponse::ConnectionFailed => {
+                self.console.log("Connection failed");
+
+                self.connection_task = None;
+            }
+            BkResponse::ListingRoomsFailed => {
+                self.console.log("Failed to get the list of joined rooms");
+
+                self.listing_rooms_task = None;
+            }
+            BkResponse::JoiningRoomFailed => {
+                self.console.log("Failed to join the room");
+
+                self.joining_room_task = None;
+            }
+            BkResponse::SyncFailed => {
+                self.console.log("Could not sync");
+
+                self.sync_task = None;
+            }
+            BkResponse::DisconnectionFailed => {
                 self.console.log("Could not disconnect");
 
                 self.disconnection_task = None;
             }
         }
-
-        true
     }
 }
 
@@ -283,17 +310,17 @@ impl Renderable<Model> for Model {
     fn view(&self) -> Html<Self> {
         html! {
             <ul>
-                <li>{ "Server name: " }<input type="text", onchange=|e| Msg::ServerName(e),/></li>
+                <li>{ "Server name: " }<input type="text", onchange=|e| Msg::UI(UIEvent::ServerName(e)),/></li>
 
-                <li>{ "Room ID: " }<input type="text", onchange=|e| Msg::RoomId(e),/></li>
+                <li>{ "Room ID: " }<input type="text", onchange=|e| Msg::UI(UIEvent::RoomId(e)),/></li>
 
-                <li>{ "Username: " }<input type="text", onchange=|e| Msg::Username(e),/></li>
+                <li>{ "Username: " }<input type="text", onchange=|e| Msg::UI(UIEvent::Username(e)),/></li>
 
-                <li>{ "Password: " }<input type="password", onchange=|e| Msg::Password(e),/></li>
+                <li>{ "Password: " }<input type="password", onchange=|e| Msg::UI(UIEvent::Password(e)),/></li>
 
                 <li>
-                    <button onclick=|_| Msg::Connect,>{ "Connect" }</button>
-                    <button onclick=|_| Msg::Disconnect,>{ "Disconnect" }</button>
+                    <button onclick=|_| Msg::BkCmd(BkCommand::Connect),>{ "Connect" }</button>
+                    <button onclick=|_| Msg::BkCmd(BkCommand::Disconnect),>{ "Disconnect" }</button>
                 </li>
             </ul>
 
