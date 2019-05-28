@@ -19,6 +19,7 @@ use yew::{html, Callback, Component, ComponentLink, Html, Renderable, ShouldRend
 
 use cs_backend::authentication::ConnectionResponse;
 use cs_backend::events::SyncResponse;
+use cs_backend::rooms::JoinedRooms;
 use cs_backend::session::Session;
 use model::dag::RoomEvents;
 use visjs::VisJsService;
@@ -31,6 +32,12 @@ pub struct Model {
 
     connection_callback: Callback<Result<ConnectionResponse, Error>>,
     connection_task: Option<FetchTask>,
+
+    listing_rooms_callback: Callback<Result<JoinedRooms, Error>>,
+    listing_rooms_task: Option<FetchTask>,
+
+    joining_room_callback: Callback<Result<(), Error>>,
+    joining_room_task: Option<FetchTask>,
 
     sync_callback: Callback<Result<SyncResponse, Error>>,
     sync_task: Option<FetchTask>,
@@ -50,11 +57,19 @@ pub enum Msg {
     Password(html::ChangeData),
 
     Connect,
+    ListRooms,
+    JoinRoom,
     Sync,
     Disconnect,
 
     Connected(ConnectionResponse),
     ConnectionFailed,
+
+    ListedRooms(JoinedRooms),
+    ListingRoomsFailed,
+
+    RoomJoined,
+    RoomJoiningFailed,
 
     Synced(SyncResponse),
     SyncFailed,
@@ -80,6 +95,23 @@ impl Component for Model {
                 }
             }),
             connection_task: None,
+
+            listing_rooms_callback: link.send_back(|response: Result<JoinedRooms, Error>| {
+                match response {
+                    Ok(res) => Msg::ListedRooms(res),
+                    Err(e) => {
+                        ConsoleService::new().log(&format!("{}", e));
+                        Msg::ListingRoomsFailed
+                    }
+                }
+            }),
+            listing_rooms_task: None,
+
+            joining_room_callback: link.send_back(|response: Result<(), Error>| match response {
+                Ok(_) => Msg::RoomJoined,
+                Err(_) => Msg::RoomJoiningFailed,
+            }),
+            joining_room_task: None,
 
             sync_callback: link.send_back(|response: Result<SyncResponse, Error>| match response {
                 Ok(res) => Msg::Synced(res),
@@ -128,6 +160,18 @@ impl Component for Model {
                 let task = self.connect(self.connection_callback.clone());
                 self.connection_task = Some(task);
             }
+            Msg::ListRooms => {
+                self.console.log("Listing joined rooms...");
+
+                let task = self.list_rooms(self.listing_rooms_callback.clone());
+                self.listing_rooms_task = Some(task);
+            }
+            Msg::JoinRoom => {
+                self.console.log("Joining the room...");
+
+                let task = self.join_room(self.joining_room_callback.clone());
+                self.joining_room_task = Some(task);
+            }
             Msg::Sync => {
                 self.console.log("Syncing...");
 
@@ -160,12 +204,40 @@ impl Component for Model {
 
                 self.connection_task = None;
 
-                self.link.send_back(|_: ()| Msg::Sync).emit(());
+                self.link.send_back(|_: ()| Msg::ListRooms).emit(());
             }
             Msg::ConnectionFailed => {
                 self.console.log("Connection failed");
 
                 self.connection_task = None;
+            }
+            Msg::ListedRooms(res) => {
+                self.console.log("Looking up in joined rooms");
+
+                self.listing_rooms_task = None;
+
+                if res.joined_rooms.contains(&self.session.room_id) {
+                    self.link.send_back(|_: ()| Msg::Sync).emit(());
+                } else {
+                    self.link.send_back(|_: ()| Msg::JoinRoom).emit(());
+                }
+            }
+            Msg::ListingRoomsFailed => {
+                self.console.log("Failed to get the list of joined rooms");
+
+                self.listing_rooms_task = None;
+            }
+            Msg::RoomJoined => {
+                self.console.log("Room joined!");
+
+                self.joining_room_task = None;
+
+                self.link.send_back(|_: ()| Msg::Sync).emit(());
+            }
+            Msg::RoomJoiningFailed => {
+                self.console.log("Failed to join the room");
+
+                self.joining_room_task = None;
             }
             Msg::Synced(res) => {
                 self.events_dag = model::dag::RoomEvents::from_sync_response(
