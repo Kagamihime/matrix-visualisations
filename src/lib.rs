@@ -256,6 +256,14 @@ impl Model {
             BkResponse::Synced(res) => {
                 self.sync_task = None;
 
+                self.session.next_batch_token = Some(res.next_batch.clone());
+
+                if self.session.prev_batch_token.is_none() {
+                    if let Some(room) = res.rooms.join.get(&self.session.room_id) {
+                        self.session.prev_batch_token = room.timeline.prev_batch.clone();
+                    }
+                }
+
                 self.events_dag = model::dag::RoomEvents::from_sync_response(
                     &self.session.room_id,
                     &self.session.server_name,
