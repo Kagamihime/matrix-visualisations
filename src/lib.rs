@@ -18,7 +18,7 @@ use yew::services::{ConsoleService, FetchService};
 use yew::{html, Callback, Component, ComponentLink, Html, Renderable, ShouldRender};
 
 use cs_backend::authentication::ConnectionResponse;
-use cs_backend::events::SyncResponse;
+use cs_backend::events::{MessagesResponse, SyncResponse};
 use cs_backend::rooms::JoinedRooms;
 use cs_backend::session::Session;
 use model::dag::RoomEvents;
@@ -41,6 +41,9 @@ pub struct Model {
 
     sync_callback: Callback<Result<SyncResponse, Error>>,
     sync_task: Option<FetchTask>,
+
+    more_msg_callback: Callback<Result<MessagesResponse, Error>>,
+    more_msg_task: Option<FetchTask>,
 
     disconnection_callback: Callback<Result<(), Error>>,
     disconnection_task: Option<FetchTask>,
@@ -68,6 +71,7 @@ pub enum BkCommand {
     ListRooms,
     JoinRoom,
     Sync,
+    MoreMsg,
     Disconnect,
 }
 
@@ -76,12 +80,14 @@ pub enum BkResponse {
     RoomsList(JoinedRooms),
     RoomJoined,
     Synced(SyncResponse),
+    MsgGot(MessagesResponse),
     Disconnected,
 
     ConnectionFailed,
     ListingRoomsFailed,
     JoiningRoomFailed,
     SyncFailed,
+    MoreMsgFailed,
     DisconnectionFailed,
 }
 
@@ -125,6 +131,14 @@ impl Component for Model {
                 Err(_) => Msg::BkRes(BkResponse::SyncFailed),
             }),
             sync_task: None,
+
+            more_msg_callback: link.send_back(|response: Result<MessagesResponse, Error>| {
+                match response {
+                    Ok(res) => Msg::BkRes(BkResponse::MsgGot(res)),
+                    Err(_) => Msg::BkRes(BkResponse::MoreMsgFailed),
+                }
+            }),
+            more_msg_task: None,
 
             disconnection_callback: link.send_back(|response: Result<(), Error>| match response {
                 Ok(_) => Msg::BkRes(BkResponse::Disconnected),
@@ -182,6 +196,7 @@ impl Model {
             BkCommand::ListRooms => "Listing joined rooms...",
             BkCommand::JoinRoom => "Joining the room...",
             BkCommand::Sync => "Syncing...",
+            BkCommand::MoreMsg => "Retrieving previous messages...",
             BkCommand::Disconnect => "Disconnecting...",
         };
 
@@ -198,6 +213,9 @@ impl Model {
                 self.joining_room_task = Some(self.join_room(self.joining_room_callback.clone()))
             }
             BkCommand::Sync => self.sync_task = Some(self.sync(self.sync_callback.clone())),
+            BkCommand::MoreMsg => {
+                self.more_msg_task = Some(self.get_prev_messages(self.more_msg_callback.clone()))
+            }
             BkCommand::Disconnect => match self.session.access_token {
                 None => {
                     self.console.log("You were not connected");
@@ -279,6 +297,26 @@ impl Model {
                     }
                     None => self.console.log("Failed to build the DAG"),
                 }
+
+                // TODO: do not call this right after
+                self.link
+                    .send_back(|_: ()| Msg::BkCmd(BkCommand::MoreMsg))
+                    .emit(());
+            }
+            BkResponse::MsgGot(res) => {
+                self.more_msg_task = None;
+
+                self.session.prev_batch_token = Some(res.end);
+
+                self.console.log("Previous messages:");
+
+                for msg in res.chunk {
+                    if let Ok(msg) = serde_json::to_string_pretty(&msg) {
+                        self.console.log(&msg);
+                    }
+                }
+
+                // TODO: add events to the DAG
             }
             BkResponse::Disconnected => {
                 self.console.log("Disconnected");
@@ -304,6 +342,11 @@ impl Model {
                 self.console.log("Could not sync");
 
                 self.sync_task = None;
+            }
+            BkResponse::MoreMsgFailed => {
+                self.console.log("Could not retrieve previous messages");
+
+                self.more_msg_task = None;
             }
             BkResponse::DisconnectionFailed => {
                 self.console.log("Could not disconnect");
