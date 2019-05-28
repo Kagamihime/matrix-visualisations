@@ -64,31 +64,16 @@ pub struct Timeline {
     pub events: Vec<JsonValue>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct MessagesResponse {
+    pub start: String,
+    pub end: String,
+    pub chunk: Vec<JsonValue>,
+}
+
 impl Model {
     pub fn sync(&mut self, callback: Callback<Result<SyncResponse, Error>>) -> FetchTask {
-        let filter = serde_json::json!({
-            "event_fields": [
-                "room_id",
-                "sender",
-                "origin",
-                "origin_server_ts",
-                "type",
-                "prev_events",
-                "depth",
-                "event_id",
-            ],
-            "event_format": "federation",
-        });
-
-        let filter = serde_json::to_string(&filter)
-            .unwrap()
-            .replace("{", "%7B")
-            .replace("}", "%7D")
-            .replace("[", "%5B")
-            .replace("]", "%5D")
-            .replace("\"", "%22")
-            .replace(":", "%3A")
-            .replace("#", "%23");
+        let filter = build_filter();
 
         let uri = Uri::builder()
             .scheme("https")
@@ -118,10 +103,82 @@ impl Model {
             if meta.status.is_success() {
                 callback.emit(data)
             } else {
-                callback.emit(Err(format_err!("{}: error connecting", meta.status)))
+                callback.emit(Err(format_err!("{}: error syncing", meta.status)))
             }
         };
 
         self.fetch.fetch(request, handler.into())
     }
+
+    pub fn get_prev_messages(
+        &mut self,
+        callback: Callback<Result<MessagesResponse, Error>>,
+    ) -> FetchTask {
+        let filter = build_filter();
+
+        let uri = Uri::builder()
+            .scheme("https")
+            .authority(self.session.server_name.as_str())
+            .path_and_query(
+                format!(
+                    "/_matrix/client/r0/rooms/{}/messages?from={}&dir=b&filter={}",
+                    self.session.room_id,
+                    self.session.prev_batch_token.clone().unwrap_or_default(),
+                    filter,
+                )
+                .as_str(),
+            )
+            .build()
+            .expect("Failed to build URI.");
+
+        let request = Request::get(uri)
+            .header("Content-Type", "application/json")
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.session.access_token.as_ref().unwrap()),
+            )
+            .body(Nothing)
+            .expect("Failed to build request.");
+
+        let handler = move |response: Response<Json<Result<MessagesResponse, Error>>>| {
+            let (meta, Json(data)) = response.into_parts();
+
+            if meta.status.is_success() {
+                callback.emit(data)
+            } else {
+                callback.emit(Err(format_err!(
+                    "{}: error retrieving previous messages",
+                    meta.status
+                )))
+            }
+        };
+
+        self.fetch.fetch(request, handler.into())
+    }
+}
+
+fn build_filter() -> String {
+    let filter = serde_json::json!({
+        "event_fields": [
+            "room_id",
+            "sender",
+            "origin",
+            "origin_server_ts",
+            "type",
+            "prev_events",
+            "depth",
+            "event_id",
+        ],
+        "event_format": "federation",
+    });
+
+    serde_json::to_string(&filter)
+        .unwrap()
+        .replace("{", "%7B")
+        .replace("}", "%7D")
+        .replace("[", "%5B")
+        .replace("]", "%5D")
+        .replace("\"", "%22")
+        .replace(":", "%3A")
+        .replace("#", "%23")
 }
