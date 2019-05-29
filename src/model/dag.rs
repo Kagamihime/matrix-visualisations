@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::{Graph, NodeIndex};
 use petgraph::Directed;
+use serde_json::Value as JsonValue;
 
 use super::event::Event;
 use crate::cs_backend::backend::SyncResponse;
@@ -14,8 +15,8 @@ pub struct RoomEvents {
     dag: Graph<Event, (), Directed>,        // The DAG of the events
     events_map: HashMap<String, NodeIndex>, // Allows to quickly locate an event in the DAG with its ID
     depth_map: HashMap<i64, Vec<NodeIndex>>,
-    latest_event: String, // The ID of the latest event in the DAG
-    earliest_event: String,
+    latest_event: String,   // The ID of the latest event in the DAG
+    earliest_event: String, // The ID of the earliest event in the DAG
     max_depth: i64,
     min_depth: i64,
 }
@@ -34,8 +35,8 @@ impl RoomEvents {
                     .iter()
                     .map(|ev| {
                         serde_json::from_value(ev.clone()).expect(&format!(
-                            "Failed to parse timeline event: {}",
-                            serde_json::to_string(&ev).expect("Failed to fail..."),
+                            "Failed to parse timeline event:\n{}",
+                            serde_json::to_string_pretty(&ev).expect("Failed to fail..."),
                         ))
                     })
                     .collect();
@@ -121,6 +122,67 @@ impl RoomEvents {
             }
             None => None,
         }
+    }
+
+    pub fn add_prev_events(&mut self, events: Vec<JsonValue>) {
+        let old_min_depth = self.min_depth;
+
+        let events: Vec<Event> = events
+            .iter()
+            .map(|ev| {
+                serde_json::from_value(ev.clone()).expect(&format!(
+                    "Failed to parse prev event:\n{}",
+                    serde_json::to_string_pretty(&ev).expect("Failed to fail..."),
+                ))
+            })
+            .collect();
+
+        for event in events.iter() {
+            let id = &event.event_id;
+            let depth = event.depth;
+            let index = self.dag.add_node(event.clone());
+
+            self.events_map.insert(id.clone(), index);
+
+            match self.depth_map.get_mut(&depth) {
+                None => {
+                    self.depth_map.insert(depth, vec![index]);
+                }
+                Some(v) => {
+                    v.push(index);
+                }
+            }
+
+            if let Some(earliest_index) = self.events_map.get(&self.earliest_event) {
+                if let Some(earliest_ev) = self.dag.node_weight(*earliest_index) {
+                    if earliest_ev > event {
+                        self.earliest_event = event.event_id.clone();
+                        self.min_depth = event.depth;
+                    }
+                }
+            }
+        }
+
+        let mut edges: Vec<(NodeIndex, NodeIndex)> = Vec::new();
+
+        // TODO: Refactor with iterators
+        for d in (self.min_depth..=old_min_depth).rev() {
+            if let Some(indices) = self.depth_map.get(&d) {
+                for index in indices {
+                    if let Some(src_ev) = self.dag.node_weight(*index) {
+                        for dst_id in src_ev.get_prev_events() {
+                            if let Some(dst_index) = self.events_map.get(dst_id) {
+                                if self.dag.find_edge(*index, *dst_index).is_none() {
+                                    edges.push((*index, *dst_index));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.dag.extend_with_edges(edges);
     }
 
     pub fn to_dot(&self) -> String {
