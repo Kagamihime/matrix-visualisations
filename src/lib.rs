@@ -348,6 +348,16 @@ impl Model {
                 self.console.log("Disconnected");
 
                 self.disconnection_task = None;
+
+                let mut session = self.session.write().unwrap();
+
+                session.access_token = None;
+                session.device_id = None;
+                session.filter_id = None;
+                session.next_batch_token = None;
+                session.prev_batch_token = None;
+
+                self.events_dag = None;
             }
             BkResponse::ConnectionFailed => {
                 self.console.log("Connection failed");
