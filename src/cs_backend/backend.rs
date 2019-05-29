@@ -367,13 +367,9 @@ fn build_filter() -> String {
         "event_format": "federation",
     });
 
-    serde_json::to_string(&filter)
-        .unwrap()
-        .replace("{", "%7B")
-        .replace("}", "%7D")
-        .replace("[", "%5B")
-        .replace("]", "%5D")
-        .replace("\"", "%22")
-        .replace(":", "%3A")
-        .replace("#", "%23")
+    percent_encoding::utf8_percent_encode(
+        &serde_json::to_string(&filter).unwrap(),
+        percent_encoding::USERINFO_ENCODE_SET,
+    )
+    .to_string()
 }

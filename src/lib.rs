@@ -1,6 +1,7 @@
 #![recursion_limit = "128"]
 
 extern crate failure;
+extern crate percent_encoding;
 extern crate petgraph;
 extern crate serde_derive;
 extern crate serde_json;
