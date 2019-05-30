@@ -334,15 +334,16 @@ impl Model {
 
                 self.session.write().unwrap().prev_batch_token = Some(res.end);
 
-                self.console.log("Previous messages:");
+                match &mut self.events_dag {
+                    Some(dag) => {
+                        dag.add_prev_events(res.chunk);
 
-                for msg in res.chunk {
-                    if let Ok(msg) = serde_json::to_string_pretty(&msg) {
-                        self.console.log(&msg);
+                        self.console.log(&format!("{}", dag.to_dot()));
+
+                        self.vis.display_dag(dag, "#dag-vis");
                     }
+                    None => self.console.log("There was no DAG"),
                 }
-
-                // TODO: add events to the DAG
             }
             BkResponse::Disconnected => {
                 self.console.log("Disconnected");
