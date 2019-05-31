@@ -31,15 +31,7 @@ impl RoomEvents {
             Some(room) => {
                 let timeline = &room.timeline.events;
 
-                let timeline: Vec<Event> = timeline
-                    .iter()
-                    .map(|ev| {
-                        serde_json::from_value(ev.clone()).expect(&format!(
-                            "Failed to parse timeline event:\n{}",
-                            serde_json::to_string_pretty(&ev).expect("Failed to fail..."),
-                        ))
-                    })
-                    .collect();
+                let timeline = parse_events(timeline);
 
                 let mut dag: Graph<Event, (), Directed> = Graph::new();
                 let mut events_map: HashMap<String, NodeIndex> =
@@ -72,15 +64,15 @@ impl RoomEvents {
                         earliest_event = id.clone();
                         max_depth = depth;
                         min_depth = depth;
-                    } else if let Some(latest_index) = events_map.get(&latest_event) {
-                        if let Some(latest_ev) = dag.node_weight(*latest_index) {
+                    } else if let Some(latest_idx) = events_map.get(&latest_event) {
+                        if let Some(latest_ev) = dag.node_weight(*latest_idx) {
                             if latest_ev < event {
                                 latest_event = event.event_id.clone();
                                 max_depth = event.depth;
                             }
                         }
-                    } else if let Some(earliest_index) = events_map.get(&earliest_event) {
-                        if let Some(earliest_ev) = dag.node_weight(*earliest_index) {
+                    } else if let Some(earliest_idx) = events_map.get(&earliest_event) {
+                        if let Some(earliest_ev) = dag.node_weight(*earliest_idx) {
                             if earliest_ev > event {
                                 earliest_event = event.event_id.clone();
                                 min_depth = event.depth;
@@ -89,22 +81,7 @@ impl RoomEvents {
                     }
                 }
 
-                let mut edges: Vec<(NodeIndex, NodeIndex)> = Vec::new();
-
-                // TODO: Refactor with iterators
-                for d in (min_depth..=max_depth).rev() {
-                    if let Some(indices) = depth_map.get(&d) {
-                        for index in indices {
-                            if let Some(src_ev) = dag.node_weight(*index) {
-                                for dst_id in src_ev.get_prev_events() {
-                                    if let Some(dst_index) = events_map.get(dst_id) {
-                                        edges.push((*index, *dst_index));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                let edges = get_new_edges(&dag, &events_map, &depth_map, min_depth, max_depth);
 
                 dag.extend_with_edges(edges);
 
@@ -127,15 +104,7 @@ impl RoomEvents {
     pub fn add_prev_events(&mut self, events: Vec<JsonValue>) {
         let old_min_depth = self.min_depth;
 
-        let events: Vec<Event> = events
-            .iter()
-            .map(|ev| {
-                serde_json::from_value(ev.clone()).expect(&format!(
-                    "Failed to parse prev event:\n{}",
-                    serde_json::to_string_pretty(&ev).expect("Failed to fail..."),
-                ))
-            })
-            .collect();
+        let events = parse_events(&events);
 
         for event in events.iter() {
             let id = &event.event_id;
@@ -153,8 +122,8 @@ impl RoomEvents {
                 }
             }
 
-            if let Some(earliest_index) = self.events_map.get(&self.earliest_event) {
-                if let Some(earliest_ev) = self.dag.node_weight(*earliest_index) {
+            if let Some(earliest_idx) = self.events_map.get(&self.earliest_event) {
+                if let Some(earliest_ev) = self.dag.node_weight(*earliest_idx) {
                     if earliest_ev > event {
                         self.earliest_event = event.event_id.clone();
                         self.min_depth = event.depth;
@@ -163,24 +132,13 @@ impl RoomEvents {
             }
         }
 
-        let mut edges: Vec<(NodeIndex, NodeIndex)> = Vec::new();
-
-        // TODO: Refactor with iterators
-        for d in (self.min_depth..=old_min_depth).rev() {
-            if let Some(indices) = self.depth_map.get(&d) {
-                for index in indices {
-                    if let Some(src_ev) = self.dag.node_weight(*index) {
-                        for dst_id in src_ev.get_prev_events() {
-                            if let Some(dst_index) = self.events_map.get(dst_id) {
-                                if self.dag.find_edge(*index, *dst_index).is_none() {
-                                    edges.push((*index, *dst_index));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let edges = get_new_edges(
+            &self.dag,
+            &self.events_map,
+            &self.depth_map,
+            self.min_depth,
+            old_min_depth,
+        );
 
         self.dag.extend_with_edges(edges);
     }
@@ -188,4 +146,44 @@ impl RoomEvents {
     pub fn to_dot(&self) -> String {
         format!("{:?}", Dot::with_config(&self.dag, &[Config::EdgeNoLabel]))
     }
+}
+
+fn parse_events(json_events: &Vec<JsonValue>) -> Vec<Event> {
+    json_events
+        .iter()
+        .map(|ev| {
+            serde_json::from_value(ev.clone()).expect(&format!(
+                "Failed to parse event:\n{}",
+                serde_json::to_string_pretty(&ev).expect("Failed to fail..."),
+            ))
+        })
+        .collect()
+}
+
+fn get_new_edges(
+    dag: &Graph<Event, (), Directed>,
+    events_map: &HashMap<String, NodeIndex>,
+    depth_map: &HashMap<i64, Vec<NodeIndex>>,
+    min_depth: i64,
+    max_depth: i64,
+) -> Vec<(NodeIndex, NodeIndex)> {
+    let mut edges = Vec::new();
+
+    for d in (min_depth..=max_depth).rev() {
+        if let Some(indices) = depth_map.get(&d) {
+            for idx in indices {
+                if let Some(src_ev) = dag.node_weight(*idx) {
+                    for dst_id in src_ev.get_prev_events() {
+                        if let Some(dst_idx) = events_map.get(dst_id) {
+                            if dag.find_edge(*idx, *dst_idx).is_none() {
+                                edges.push((*idx, *dst_idx));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    edges
 }
