@@ -225,7 +225,12 @@ impl Model {
                 )
             }
             BkCommand::Sync => {
-                self.sync_task = Some(self.cs_backend.sync(self.sync_callback.clone()))
+                let next_batch_token = self.session.read().unwrap().next_batch_token.clone();
+
+                self.sync_task = Some(
+                    self.cs_backend
+                        .sync(self.sync_callback.clone(), next_batch_token),
+                )
             }
             BkCommand::MoreMsg => {
                 self.more_msg_task = Some(
@@ -299,8 +304,7 @@ impl Model {
                 self.sync_task = None;
 
                 let mut session = self.session.write().unwrap();
-
-                session.next_batch_token = Some(res.next_batch.clone());
+                let next_batch_token = res.next_batch.clone();
 
                 if session.prev_batch_token.is_none() {
                     if let Some(room) = res.rooms.join.get(&session.room_id) {
@@ -308,11 +312,21 @@ impl Model {
                     }
                 }
 
-                self.events_dag = model::dag::RoomEvents::from_sync_response(
-                    &session.room_id,
-                    &session.server_name,
-                    res,
-                );
+                match session.next_batch_token {
+                    None => {
+                        self.events_dag = model::dag::RoomEvents::from_sync_response(
+                            &session.room_id,
+                            &session.server_name,
+                            res,
+                        );
+                    }
+                    Some(_) => match &mut self.events_dag {
+                        Some(dag) => dag.add_new_events(res),
+                        None => self.console.log("There is no DAG"),
+                    },
+                }
+
+                session.next_batch_token = Some(next_batch_token);
 
                 match &self.events_dag {
                     Some(dag) => {
@@ -323,6 +337,11 @@ impl Model {
                     }
                     None => self.console.log("Failed to build the DAG"),
                 }
+
+                // Request for futur new events
+                self.link
+                    .send_back(|_: ()| Msg::BkCmd(BkCommand::Sync))
+                    .emit(());
 
                 // TODO: do not call this right after
                 self.link
@@ -348,6 +367,7 @@ impl Model {
             BkResponse::Disconnected => {
                 self.console.log("Disconnected");
 
+                self.sync_task = None; // If a `/sync` request was in progress, cancel it
                 self.disconnection_task = None;
 
                 let mut session = self.session.write().unwrap();
