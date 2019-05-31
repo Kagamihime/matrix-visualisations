@@ -47,6 +47,9 @@ pub struct Model {
     more_msg_callback: Callback<Result<MessagesResponse, Error>>,
     more_msg_task: Option<FetchTask>,
 
+    leaving_room_callback: Callback<Result<(), Error>>,
+    leaving_room_task: Option<FetchTask>,
+
     disconnection_callback: Callback<Result<(), Error>>,
     disconnection_task: Option<FetchTask>,
 
@@ -75,6 +78,7 @@ pub enum BkCommand {
     JoinRoom,
     Sync,
     MoreMsg,
+    LeaveRoom,
     Disconnect,
 }
 
@@ -84,6 +88,7 @@ pub enum BkResponse {
     RoomJoined,
     Synced(SyncResponse),
     MsgGot(MessagesResponse),
+    RoomLeft,
     Disconnected,
 
     ConnectionFailed,
@@ -91,6 +96,7 @@ pub enum BkResponse {
     JoiningRoomFailed,
     SyncFailed,
     MoreMsgFailed,
+    LeavingRoomFailed,
     DisconnectionFailed,
 }
 
@@ -143,6 +149,12 @@ impl Component for Model {
                 }
             }),
             more_msg_task: None,
+
+            leaving_room_callback: link.send_back(|response: Result<(), Error>| match response {
+                Ok(_) => Msg::BkRes(BkResponse::RoomLeft),
+                Err(_) => Msg::BkRes(BkResponse::LeavingRoomFailed),
+            }),
+            leaving_room_task: None,
 
             disconnection_callback: link.send_back(|response: Result<(), Error>| match response {
                 Ok(_) => Msg::BkRes(BkResponse::Disconnected),
@@ -202,6 +214,7 @@ impl Model {
             BkCommand::JoinRoom => "Joining the room...",
             BkCommand::Sync => "Syncing...",
             BkCommand::MoreMsg => "Retrieving previous messages...",
+            BkCommand::LeaveRoom => "Leaving the room...",
             BkCommand::Disconnect => "Disconnecting...",
         };
 
@@ -237,6 +250,12 @@ impl Model {
                     self.cs_backend
                         .get_prev_messages(self.more_msg_callback.clone()),
                 )
+            }
+            BkCommand::LeaveRoom => {
+                self.leaving_room_task = Some(
+                    self.cs_backend
+                        .leave_room(self.leaving_room_callback.clone()),
+                );
             }
             BkCommand::Disconnect => match self.session.read().unwrap().access_token {
                 None => {
@@ -364,6 +383,15 @@ impl Model {
                     None => self.console.log("There was no DAG"),
                 }
             }
+            BkResponse::RoomLeft => {
+                self.leaving_room_task = None;
+
+                self.console.log("Room left!");
+
+                self.link
+                    .send_back(|_: ()| Msg::BkCmd(BkCommand::Disconnect))
+                    .emit(());
+            }
             BkResponse::Disconnected => {
                 self.console.log("Disconnected");
 
@@ -405,6 +433,11 @@ impl Model {
 
                 self.more_msg_task = None;
             }
+            BkResponse::LeavingRoomFailed => {
+                self.console.log("Failed to leave the room");
+
+                self.leaving_room_task = None;
+            }
             BkResponse::DisconnectionFailed => {
                 self.console.log("Could not disconnect");
 
@@ -429,6 +462,7 @@ impl Renderable<Model> for Model {
                 <li>
                     <button onclick=|_| Msg::BkCmd(BkCommand::Connect),>{ "Connect" }</button>
                     <button onclick=|_| Msg::BkCmd(BkCommand::Disconnect),>{ "Disconnect" }</button>
+                    <button onclick=|_| Msg::BkCmd(BkCommand::LeaveRoom),> { "Leave room and disconnect" }</button>
                 </li>
             </ul>
 
