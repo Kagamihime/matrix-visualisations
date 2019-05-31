@@ -326,6 +326,43 @@ impl CSBackend {
         self.fetch.fetch(request, handler.into())
     }
 
+    pub fn leave_room(&mut self, callback: Callback<Result<(), Error>>) -> FetchTask {
+        let (server_name, access_token, room_id) = {
+            let session = self.session.read().unwrap();
+
+            (
+                session.server_name.clone(),
+                session.access_token.clone(),
+                session.room_id.clone(),
+            )
+        };
+
+        let uri = Uri::builder()
+            .scheme("https")
+            .authority(server_name.as_str())
+            .path_and_query(format!("/_matrix/client/r0/rooms/{}/leave", room_id).as_str())
+            .build()
+            .expect("Failed to build URI.");
+
+        let request = Request::post(uri)
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {}", access_token.unwrap()))
+            .body(Nothing)
+            .expect("Failed to build request.");
+
+        let handler = move |response: Response<Nothing>| {
+            let (meta, _) = response.into_parts();
+
+            if meta.status.is_success() {
+                callback.emit(Ok(()))
+            } else {
+                callback.emit(Err(format_err!("{}: error leaving the room", meta.status)))
+            }
+        };
+
+        self.fetch.fetch(request, handler.into())
+    }
+
     pub fn disconnect(&mut self, callback: Callback<Result<(), Error>>) -> FetchTask {
         let (server_name, access_token) = {
             let session = self.session.read().unwrap();
