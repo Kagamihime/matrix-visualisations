@@ -101,6 +101,52 @@ impl RoomEvents {
         }
     }
 
+    pub fn add_new_events(&mut self, res: SyncResponse) {
+        if let Some(room) = res.rooms.join.get(&self.room_id) {
+            let old_max_depth = self.max_depth;
+
+            let events = &room.timeline.events;
+
+            let events = parse_events(events);
+
+            for event in events.iter() {
+                let id = &event.event_id;
+                let depth = event.depth;
+                let index = self.dag.add_node(event.clone());
+
+                self.events_map.insert(id.clone(), index);
+
+                match self.depth_map.get_mut(&depth) {
+                    None => {
+                        self.depth_map.insert(depth, vec![index]);
+                    }
+                    Some(v) => {
+                        v.push(index);
+                    }
+                }
+
+                if let Some(latest_idx) = self.events_map.get(&self.latest_event) {
+                    if let Some(latest_ev) = self.dag.node_weight(*latest_idx) {
+                        if latest_ev < event {
+                            self.latest_event = event.event_id.clone();
+                            self.max_depth = event.depth;
+                        }
+                    }
+                }
+            }
+
+            let edges = get_new_edges(
+                &self.dag,
+                &self.events_map,
+                &self.depth_map,
+                old_max_depth,
+                self.max_depth,
+            );
+
+            self.dag.extend_with_edges(edges);
+        }
+    }
+
     pub fn add_prev_events(&mut self, events: Vec<JsonValue>) {
         let old_min_depth = self.min_depth;
 
