@@ -225,7 +225,11 @@ impl CSBackend {
         self.fetch.fetch(request, handler.into())
     }
 
-    pub fn sync(&mut self, callback: Callback<Result<SyncResponse, Error>>) -> FetchTask {
+    pub fn sync(
+        &mut self,
+        callback: Callback<Result<SyncResponse, Error>>,
+        next_batch_token: Option<String>,
+    ) -> FetchTask {
         let (server_name, access_token) = {
             let session = self.session.read().unwrap();
 
@@ -233,17 +237,19 @@ impl CSBackend {
         };
 
         let filter = build_filter();
+        let mut query_params = format!(
+            "/_matrix/client/r0/sync?filter={}&set_presence=offline&timeout=5000",
+            filter
+        );
+        if let Some(next_batch_token) = next_batch_token {
+            query_params.push_str("&since=");
+            query_params.push_str(&next_batch_token);
+        }
 
         let uri = Uri::builder()
             .scheme("https")
             .authority(server_name.as_str())
-            .path_and_query(
-                format!(
-                    "/_matrix/client/r0/sync?filter={}&set_presence=offline&timeout=5000",
-                    filter
-                )
-                .as_str(),
-            )
+            .path_and_query(query_params.as_str())
             .build()
             .expect("Failed to build URI.");
 
