@@ -64,6 +64,7 @@ pub enum Msg {
     BkRes(BkResponse),
 }
 
+/// These messages notifies the application of changes in the data modifiable via the UI.
 pub enum UIEvent {
     ServerName(html::ChangeData),
     RoomId(html::ChangeData),
@@ -72,6 +73,7 @@ pub enum UIEvent {
     Password(html::ChangeData),
 }
 
+/// These messages are used by the frontend to send commands to the backend.
 pub enum BkCommand {
     Connect,
     ListRooms,
@@ -82,6 +84,7 @@ pub enum BkCommand {
     Disconnect,
 }
 
+/// These messages are responses from the backend to the frontend.
 pub enum BkResponse {
     Connected(ConnectionResponse),
     RoomsList(JoinedRooms),
@@ -183,6 +186,8 @@ impl Component for Model {
 
 impl Model {
     fn process_ui_event(&mut self, event: UIEvent) {
+        // Change the informations of the session whenever their corresponding entries in the UI
+        // are changed
         match event {
             UIEvent::ServerName(sn) => {
                 if let html::ChangeData::Value(sn) = sn {
@@ -220,6 +225,7 @@ impl Model {
 
         self.console.log(console_msg);
 
+        // Order the backend to make requests to the homeserver according to the command received
         match cmd {
             BkCommand::Connect => {
                 self.connection_task =
@@ -278,6 +284,8 @@ impl Model {
 
                 let mut session = self.session.write().unwrap();
 
+                // Save the informations given by the homeserver when connecting to it. The access
+                // token will be used for authenticating subsequent requests.
                 session.user_id = res.user_id;
                 session.access_token = Some(res.access_token);
                 session.device_id = Some(res.device_id);
@@ -288,6 +296,7 @@ impl Model {
                     session.device_id.as_ref().unwrap()
                 ));
 
+                // Request the list of the rooms joined by the user as soon as we are connected
                 self.link
                     .send_back(|_: ()| Msg::BkCmd(BkCommand::ListRooms))
                     .emit(());
@@ -301,10 +310,12 @@ impl Model {
                     .joined_rooms
                     .contains(&self.session.read().unwrap().room_id)
                 {
+                    // If the user is already in the room to observe, make the initial sync
                     self.link
                         .send_back(|_: ()| Msg::BkCmd(BkCommand::Sync))
                         .emit(());
                 } else {
+                    // Join the room if the user is not already in it
                     self.link
                         .send_back(|_: ()| Msg::BkCmd(BkCommand::JoinRoom))
                         .emit(());
@@ -315,6 +326,7 @@ impl Model {
 
                 self.joining_room_task = None;
 
+                // Make the initial sync as soon as the user has joined the room
                 self.link
                     .send_back(|_: ()| Msg::BkCmd(BkCommand::Sync))
                     .emit(());
@@ -323,8 +335,12 @@ impl Model {
                 self.sync_task = None;
 
                 let mut session = self.session.write().unwrap();
-                let next_batch_token = res.next_batch.clone();
+                let next_batch_token = res.next_batch.clone(); // Save the next batch token to get new events later
 
+                // Save the prev batch token in order to get earlier events from this room later
+                // We save this value while syncing only once. The next times, it'll be got
+                // from `/messages` requests.
+                // TODO: should be moved inside the next match flow
                 if session.prev_batch_token.is_none() {
                     if let Some(room) = res.rooms.join.get(&session.room_id) {
                         session.prev_batch_token = room.timeline.prev_batch.clone();
@@ -333,6 +349,7 @@ impl Model {
 
                 match session.next_batch_token {
                     None => {
+                        // Create a new DAG if it is the initial sync
                         self.events_dag = model::dag::RoomEvents::from_sync_response(
                             &session.room_id,
                             &session.server_name,
@@ -340,6 +357,7 @@ impl Model {
                         );
                     }
                     Some(_) => match &mut self.events_dag {
+                        // Add new events to the DAG
                         Some(dag) => dag.add_new_events(res),
                         None => self.console.log("There is no DAG"),
                     },
@@ -352,6 +370,7 @@ impl Model {
                         self.console.log("Events DAG built!");
                         self.console.log(&dag.to_dot());
 
+                        // Display the DAG with VisJs if it has been successfully built
                         self.vis.display_dag(dag, "#dag-vis");
                     }
                     None => self.console.log("Failed to build the DAG"),
@@ -370,9 +389,11 @@ impl Model {
             BkResponse::MsgGot(res) => {
                 self.more_msg_task = None;
 
+                // Save the prev batch token for the next `/messages` request
                 self.session.write().unwrap().prev_batch_token = Some(res.end);
 
                 match &mut self.events_dag {
+                    // Add earlier event to the DAG and display them
                     Some(dag) => {
                         dag.add_prev_events(res.chunk);
 
@@ -388,6 +409,7 @@ impl Model {
 
                 self.console.log("Room left!");
 
+                // Disconnect as soon as we leave the room
                 self.link
                     .send_back(|_: ()| Msg::BkCmd(BkCommand::Disconnect))
                     .emit(());
@@ -400,6 +422,8 @@ impl Model {
 
                 let mut session = self.session.write().unwrap();
 
+                // Erase the current session data so they won't be erroneously used if the user
+                // logs in again
                 session.access_token = None;
                 session.device_id = None;
                 session.filter_id = None;

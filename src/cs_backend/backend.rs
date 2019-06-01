@@ -10,11 +10,14 @@ use yew::services::fetch::{FetchService, FetchTask, Request, Response, Uri};
 
 use super::session::Session;
 
+/// Represents the backend used to communicate with a homeserver via the Client-Server HTTP REST
+/// API.
 pub struct CSBackend {
     fetch: FetchService,
     session: Arc<RwLock<Session>>,
 }
 
+/// Represents the JSON body of a `POST /_matrix/client/r0/login` request.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ConnectionRequest {
     #[serde(rename = "type")]
@@ -24,6 +27,7 @@ pub struct ConnectionRequest {
     initial_device_display_name: String,
 }
 
+/// Represents the `identifier` field in `ConnectionRequest`.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Identifier {
     #[serde(rename = "type")]
@@ -31,6 +35,7 @@ pub struct Identifier {
     user: String,
 }
 
+/// Represents the JSON body of a response to a `POST /_matrix/client/r0/login` request.
 #[derive(Debug, Deserialize)]
 pub struct ConnectionResponse {
     pub user_id: String,
@@ -38,11 +43,13 @@ pub struct ConnectionResponse {
     pub device_id: String,
 }
 
+/// Represents the JSON body of a response to a `GET /_matrix/client/r0/joined_rooms` request.
 #[derive(Debug, Deserialize)]
 pub struct JoinedRooms {
     pub joined_rooms: Vec<String>,
 }
 
+/// Represents the JSON body of a response to a `GET /_matrix/client/r0/sync` request.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SyncResponse {
     pub next_batch: String,
@@ -57,6 +64,7 @@ pub struct SyncResponse {
     device_one_time_keys_count: HashMap<String, u64>,
 }
 
+/// Represents the list of rooms in `SyncResponse`.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Rooms {
     #[serde(default)]
@@ -67,6 +75,7 @@ pub struct Rooms {
     invite: HashMap<String, JsonValue>,
 }
 
+/// Represents the list of rooms joined by the user in `SyncResponse`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct JoinedRoom {
     #[serde(default)]
@@ -88,6 +97,8 @@ pub struct State {
     pub events: Vec<JsonValue>,
 }
 
+/// Represents the timeline of a room in `SyncResponse`. These are the events of the DAG the
+/// application must build for the observed room.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Timeline {
     #[serde(default)]
@@ -98,6 +109,8 @@ pub struct Timeline {
     pub events: Vec<JsonValue>,
 }
 
+/// Represents the JSON body of a response to a `GET /_matrix/client/r0/rooms/{roomId}/messages`
+/// request.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MessagesResponse {
     pub start: String,
@@ -106,6 +119,7 @@ pub struct MessagesResponse {
 }
 
 impl CSBackend {
+    /// Creates a new CS backend linked to the given `session`.
     pub fn with_session(session: Arc<RwLock<Session>>) -> Self {
         CSBackend {
             fetch: FetchService::new(),
@@ -113,6 +127,8 @@ impl CSBackend {
         }
     }
 
+    /// Sends a login request to the homeserver and then calls `callback` when it gets the
+    /// response.
     pub fn connect(&mut self, callback: Callback<Result<ConnectionResponse, Error>>) -> FetchTask {
         let (server_name, username, password) = {
             let session = self.session.read().unwrap();
@@ -154,6 +170,8 @@ impl CSBackend {
         self.fetch.fetch(request, handler.into())
     }
 
+    /// Sends a request to the homeserver in order to get the list of the rooms currently joined
+    /// by the user and then calls `callback` when it gets the response.
     pub fn list_rooms(&mut self, callback: Callback<Result<JoinedRooms, Error>>) -> FetchTask {
         let (server_name, access_token) = {
             let session = self.session.read().unwrap();
@@ -188,6 +206,8 @@ impl CSBackend {
         self.fetch.fetch(request, handler.into())
     }
 
+    /// Sends a request to the homeserver to join the room to observe and then calls `callback`
+    /// when it gets the response.
     pub fn join_room(&mut self, callback: Callback<Result<(), Error>>) -> FetchTask {
         let (server_name, access_token, room_id) = {
             let session = self.session.read().unwrap();
@@ -225,6 +245,8 @@ impl CSBackend {
         self.fetch.fetch(request, handler.into())
     }
 
+    /// Sends a request to the homeserver for making the initial sync or receiving new events and
+    /// then calls `callback` when it gets the response.
     pub fn sync(
         &mut self,
         callback: Callback<Result<SyncResponse, Error>>,
@@ -272,6 +294,8 @@ impl CSBackend {
         self.fetch.fetch(request, handler.into())
     }
 
+    /// Sends a request to the homeserver to get earlier events from the room to observe and then
+    /// calls `callback` when it gets the response.
     pub fn get_prev_messages(
         &mut self,
         callback: Callback<Result<MessagesResponse, Error>>,
@@ -326,6 +350,8 @@ impl CSBackend {
         self.fetch.fetch(request, handler.into())
     }
 
+    /// Sends a request to the homeserver to leave the room which was observed and then calls
+    /// `callback` when it gets the response.
     pub fn leave_room(&mut self, callback: Callback<Result<(), Error>>) -> FetchTask {
         let (server_name, access_token, room_id) = {
             let session = self.session.read().unwrap();
@@ -363,6 +389,8 @@ impl CSBackend {
         self.fetch.fetch(request, handler.into())
     }
 
+    /// Sends a request to the homeserver to logout and then calls `callback` when it gets the
+    /// response.
     pub fn disconnect(&mut self, callback: Callback<Result<(), Error>>) -> FetchTask {
         let (server_name, access_token) = {
             let session = self.session.read().unwrap();
@@ -395,6 +423,10 @@ impl CSBackend {
     }
 }
 
+// Builds a filter which allows the application to get events in the federation format with only
+// the fields required to observe the room. Events in the federation format includes informations
+// like the depth of the event in the DAG and the ID of the previous events, it allows the
+// application to properly build the events DAG of a room.
 fn build_filter() -> String {
     let filter = serde_json::json!({
         "event_fields": [
