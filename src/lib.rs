@@ -337,18 +337,13 @@ impl Model {
                 let mut session = self.session.write().unwrap();
                 let next_batch_token = res.next_batch.clone(); // Save the next batch token to get new events later
 
-                // Save the prev batch token in order to get earlier events from this room later
-                // We save this value while syncing only once. The next times, it'll be got
-                // from `/messages` requests.
-                // TODO: should be moved inside the next match flow
-                if session.prev_batch_token.is_none() {
-                    if let Some(room) = res.rooms.join.get(&session.room_id) {
-                        session.prev_batch_token = room.timeline.prev_batch.clone();
-                    }
-                }
-
                 match session.next_batch_token {
                     None => {
+                        // Initialise the prev batch token on the initial sync
+                        if let Some(room) = res.rooms.join.get(&session.room_id) {
+                            session.prev_batch_token = room.timeline.prev_batch.clone();
+                        }
+
                         // Create a new DAG if it is the initial sync
                         self.events_dag = model::dag::RoomEvents::from_sync_response(
                             &session.room_id,
@@ -367,9 +362,6 @@ impl Model {
 
                 match &self.events_dag {
                     Some(dag) => {
-                        self.console.log("Events DAG built!");
-                        self.console.log(&dag.to_dot());
-
                         // Display the DAG with VisJs if it has been successfully built
                         self.vis.display_dag(dag, "#dag-vis");
                     }
@@ -396,8 +388,6 @@ impl Model {
                     // Add earlier event to the DAG and display them
                     Some(dag) => {
                         dag.add_prev_events(res.chunk);
-
-                        self.console.log(&format!("{}", dag.to_dot()));
 
                         self.vis.display_dag(dag, "#dag-vis");
                     }
