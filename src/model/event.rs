@@ -4,11 +4,12 @@ use std::fmt;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
+/// The internal representation of an event in the DAG.
 #[derive(Default, Clone, Deserialize, Serialize)]
 pub struct Event {
     room_id: String,       // Room identifier
-    sender: String,        // The ID of the user sending the event
-    origin: String,        // The `server_name` of the homeserver that created this event
+    sender: String,        // The ID of the user who has sent this event
+    origin: String,        // The `server_name` of the homeserver which created this event
     origin_server_ts: i64, // Timestamp in milliseconds on origin homeserver when this event was created
     #[serde(rename = "type")]
     etype: String, // Event type
@@ -19,7 +20,7 @@ pub struct Event {
 
 impl Event {
     /// This function is needed because the content of a the `prev_events` field can change
-    /// across the versions of rooms
+    /// across the versions of rooms.
     pub fn get_prev_events(&self) -> Vec<&str> {
         self.prev_events
             .iter()

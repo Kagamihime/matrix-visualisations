@@ -1,3 +1,5 @@
+/// Holds every informations allowing the application to communicate with the homeserver and
+/// retrieve the events of the room to observe.
 #[derive(Clone, Debug)]
 pub struct Session {
     pub server_name: String,

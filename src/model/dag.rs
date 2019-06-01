@@ -8,20 +8,23 @@ use serde_json::Value as JsonValue;
 use super::event::Event;
 use crate::cs_backend::backend::SyncResponse;
 
+/// The internal representation of the events DAG of the room being observed as well as various
+/// informations and `HashMap`s which makes easier to locate the events.
 pub struct RoomEvents {
     room_id: String,     // The ID of the room
     server_name: String, // The name of the server this DAG was retrieved from
 
-    dag: Graph<Event, (), Directed>,        // The DAG of the events
+    dag: Graph<Event, (), Directed>,         // The DAG of the events
     events_map: HashMap<String, NodeIndex>, // Allows to quickly locate an event in the DAG with its ID
-    depth_map: HashMap<i64, Vec<NodeIndex>>,
-    latest_event: String,   // The ID of the latest event in the DAG
-    earliest_event: String, // The ID of the earliest event in the DAG
-    max_depth: i64,
-    min_depth: i64,
+    depth_map: HashMap<i64, Vec<NodeIndex>>, // Allows to quickly locate events at a given depth in the DAG
+    latest_event: String,                    // The ID of the latest event in the DAG
+    earliest_event: String,                  // The ID of the earliest event in the DAG
+    max_depth: i64,                          // Minimal depth of the events in the DAG
+    min_depth: i64,                          // Maximal depth of the events in the DAG
 }
 
 impl RoomEvents {
+    /// Creates an event DAG from the initial `SyncResponse`.
     pub fn from_sync_response(
         room_id: &str,
         server_name: &str,
@@ -46,10 +49,11 @@ impl RoomEvents {
                 for event in timeline.iter() {
                     let id = &event.event_id;
                     let depth = event.depth;
-                    let index = dag.add_node(event.clone());
+                    let index = dag.add_node(event.clone()); // Add each event as a node in the DAG
 
-                    events_map.insert(id.clone(), index);
+                    events_map.insert(id.clone(), index); // Update the events map
 
+                    // Update the depth map
                     match depth_map.get_mut(&depth) {
                         None => {
                             depth_map.insert(depth, vec![index]);
@@ -59,6 +63,8 @@ impl RoomEvents {
                         }
                     }
 
+                    // Update the minimal and maximal depth of the events of the DAG, as well as
+                    // the latest and earliest event
                     if latest_event.is_empty() {
                         latest_event = id.clone();
                         earliest_event = id.clone();
@@ -101,6 +107,7 @@ impl RoomEvents {
         }
     }
 
+    /// Adds new events to the DAG from a `SyncResponse`.
     pub fn add_new_events(&mut self, res: SyncResponse) {
         if let Some(room) = res.rooms.join.get(&self.room_id) {
             let old_max_depth = self.max_depth;
@@ -112,10 +119,11 @@ impl RoomEvents {
             for event in events.iter() {
                 let id = &event.event_id;
                 let depth = event.depth;
-                let index = self.dag.add_node(event.clone());
+                let index = self.dag.add_node(event.clone()); // Add each new event as a node in the DAG
 
-                self.events_map.insert(id.clone(), index);
+                self.events_map.insert(id.clone(), index); // Update the events map
 
+                // Update the depth map
                 match self.depth_map.get_mut(&depth) {
                     None => {
                         self.depth_map.insert(depth, vec![index]);
@@ -125,6 +133,7 @@ impl RoomEvents {
                     }
                 }
 
+                // Update the latest event of the DAG as well as its maximal depth
                 if let Some(latest_idx) = self.events_map.get(&self.latest_event) {
                     if let Some(latest_ev) = self.dag.node_weight(*latest_idx) {
                         if latest_ev < event {
@@ -135,6 +144,7 @@ impl RoomEvents {
                 }
             }
 
+            // Get the new egdes of the DAG
             let edges = get_new_edges(
                 &self.dag,
                 &self.events_map,
@@ -147,6 +157,7 @@ impl RoomEvents {
         }
     }
 
+    /// Adds earlier `events` to the DAG.
     pub fn add_prev_events(&mut self, events: Vec<JsonValue>) {
         let old_min_depth = self.min_depth;
 
@@ -155,10 +166,11 @@ impl RoomEvents {
         for event in events.iter() {
             let id = &event.event_id;
             let depth = event.depth;
-            let index = self.dag.add_node(event.clone());
+            let index = self.dag.add_node(event.clone()); // Add each earlier event as a node in the DAG
 
-            self.events_map.insert(id.clone(), index);
+            self.events_map.insert(id.clone(), index); // Update the events map
 
+            // Update the depth map
             match self.depth_map.get_mut(&depth) {
                 None => {
                     self.depth_map.insert(depth, vec![index]);
@@ -168,6 +180,7 @@ impl RoomEvents {
                 }
             }
 
+            // Update the earliest event of the DAG as well as its minimal depth
             if let Some(earliest_idx) = self.events_map.get(&self.earliest_event) {
                 if let Some(earliest_ev) = self.dag.node_weight(*earliest_idx) {
                     if earliest_ev > event {
@@ -178,6 +191,7 @@ impl RoomEvents {
             }
         }
 
+        // Get the new egdes of the DAG
         let edges = get_new_edges(
             &self.dag,
             &self.events_map,
@@ -194,6 +208,7 @@ impl RoomEvents {
     }
 }
 
+// Parses a list of events encoded as JSON values.
 fn parse_events(json_events: &Vec<JsonValue>) -> Vec<Event> {
     json_events
         .iter()
@@ -206,6 +221,7 @@ fn parse_events(json_events: &Vec<JsonValue>) -> Vec<Event> {
         .collect()
 }
 
+// Computes the list of the missing edges in the DAG.
 fn get_new_edges(
     dag: &Graph<Event, (), Directed>,
     events_map: &HashMap<String, NodeIndex>,
