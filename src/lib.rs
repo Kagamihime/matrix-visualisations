@@ -350,23 +350,26 @@ impl Model {
                             &session.server_name,
                             res,
                         );
+
+                        match &mut self.events_dag {
+                            Some(dag) => {
+                                // Display the DAG with VisJs if it has been successfully built
+                                self.vis.display_dag(dag, "#dag-vis");
+                            }
+                            None => self.console.log("Failed to build the DAG"),
+                        }
                     }
                     Some(_) => match &mut self.events_dag {
                         // Add new events to the DAG
-                        Some(dag) => dag.add_new_events(res),
+                        Some(dag) => {
+                            dag.add_new_events(res);
+                            self.vis.update_dag(dag);
+                        }
                         None => self.console.log("There is no DAG"),
                     },
                 }
 
                 session.next_batch_token = Some(next_batch_token);
-
-                match &self.events_dag {
-                    Some(dag) => {
-                        // Display the DAG with VisJs if it has been successfully built
-                        self.vis.display_dag(dag, "#dag-vis");
-                    }
-                    None => self.console.log("Failed to build the DAG"),
-                }
 
                 // Request for futur new events
                 self.link
@@ -389,7 +392,7 @@ impl Model {
                     Some(dag) => {
                         dag.add_prev_events(res.chunk);
 
-                        self.vis.display_dag(dag, "#dag-vis");
+                        self.vis.update_dag(dag);
                     }
                     None => self.console.log("There was no DAG"),
                 }
