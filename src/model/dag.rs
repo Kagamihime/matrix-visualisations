@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
-use petgraph::dot::{Config, Dot};
 use petgraph::graph::{Graph, NodeIndex};
-use petgraph::Directed;
+use petgraph::visit::EdgeRef;
+use petgraph::{Directed, Direction};
+use serde_derive::Serialize;
 use serde_json::Value as JsonValue;
 
 use super::event::Event;
@@ -17,10 +18,28 @@ pub struct RoomEvents {
     dag: Graph<Event, (), Directed>,         // The DAG of the events
     events_map: HashMap<String, NodeIndex>, // Allows to quickly locate an event in the DAG with its ID
     depth_map: HashMap<i64, Vec<NodeIndex>>, // Allows to quickly locate events at a given depth in the DAG
-    latest_event: String,                    // The ID of the latest event in the DAG
-    earliest_event: String,                  // The ID of the earliest event in the DAG
+    pub latest_event: String,                // The ID of the latest event in the DAG
+    pub earliest_event: String,              // The ID of the earliest event in the DAG
     max_depth: i64,                          // Minimal depth of the events in the DAG
     min_depth: i64,                          // Maximal depth of the events in the DAG
+}
+
+#[derive(Serialize)]
+pub struct DataSet {
+    nodes: Vec<DataSetNode>,
+    edges: Vec<DataSetEdge>,
+}
+
+#[derive(Serialize)]
+pub struct DataSetNode {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Serialize)]
+pub struct DataSetEdge {
+    from: String,
+    to: String,
 }
 
 impl RoomEvents {
@@ -203,8 +222,130 @@ impl RoomEvents {
         self.dag.extend_with_edges(edges);
     }
 
-    pub fn to_dot(&self) -> String {
-        format!("{:?}", Dot::with_config(&self.dag, &[Config::EdgeNoLabel]))
+    pub fn create_data_set(&mut self) -> DataSet {
+        let nodes: Vec<DataSetNode> = self
+            .dag
+            .node_weights_mut()
+            .map(|w| w.to_data_set_node())
+            .collect();
+
+        let edges: Vec<DataSetEdge> = self
+            .dag
+            .edge_references()
+            .map(|edge| {
+                let from = self
+                    .dag
+                    .node_weight(edge.source())
+                    .unwrap()
+                    .event_id
+                    .clone();
+                let to = self
+                    .dag
+                    .node_weight(edge.target())
+                    .unwrap()
+                    .event_id
+                    .clone();
+
+                DataSetEdge { from, to }
+            })
+            .collect();
+
+        DataSet { nodes, edges }
+    }
+
+    pub fn get_earlier_events(&self, from: String) -> DataSet {
+        let events = self.older_events(&from);
+
+        let edges = self
+            .older_edges(&events)
+            .iter()
+            .map(|e| self.to_data_set_edge(*e).unwrap())
+            .collect();
+
+        let nodes = events.iter().map(|ev| ev.to_data_set_node()).collect();
+
+        DataSet { nodes, edges }
+    }
+
+    pub fn get_new_events(&self, from: String) -> DataSet {
+        let events = self.newer_events(&from);
+
+        let edges = self
+            .newer_edges(&events)
+            .iter()
+            .map(|e| self.to_data_set_edge(*e).unwrap())
+            .collect();
+
+        let nodes = events.iter().map(|ev| ev.to_data_set_node()).collect();
+
+        DataSet { nodes, edges }
+    }
+
+    fn older_events(&self, from: &str) -> Vec<&Event> {
+        let from_idx = *self.events_map.get(from).unwrap();
+        let mut events: Vec<&Event> = Vec::new();
+
+        if let Some(from_event) = self.dag.node_weight(from_idx) {
+            events = self
+                .dag
+                .node_indices()
+                .map(|i| self.dag.node_weight(i).expect("wrong index"))
+                .filter(|&ev| ev < from_event)
+                .collect();
+        }
+
+        events
+    }
+
+    fn newer_events(&self, from: &str) -> Vec<&Event> {
+        let from_idx = *self.events_map.get(from).unwrap();
+        let mut events: Vec<&Event> = Vec::new();
+
+        if let Some(from_event) = self.dag.node_weight(from_idx) {
+            events = self
+                .dag
+                .node_indices()
+                .map(|i| self.dag.node_weight(i).expect("wrong index"))
+                .filter(|&ev| ev > from_event)
+                .collect();
+        }
+
+        events
+    }
+
+    fn older_edges(&self, events: &Vec<&Event>) -> Vec<(NodeIndex, NodeIndex)> {
+        let mut edges = Vec::new();
+
+        for ev in events {
+            let idx = self.events_map.get(&ev.event_id).unwrap();
+
+            for e in self.dag.edges_directed(*idx, Direction::Incoming) {
+                edges.push((e.source(), e.target()));
+            }
+        }
+
+        edges
+    }
+
+    fn newer_edges(&self, events: &Vec<&Event>) -> Vec<(NodeIndex, NodeIndex)> {
+        let mut edges = Vec::new();
+
+        for ev in events {
+            let idx = self.events_map.get(&ev.event_id).unwrap();
+
+            for e in self.dag.edges_directed(*idx, Direction::Outgoing) {
+                edges.push((e.source(), e.target()));
+            }
+        }
+
+        edges
+    }
+
+    fn to_data_set_edge(&self, (src, dst): (NodeIndex, NodeIndex)) -> Option<DataSetEdge> {
+        let from = self.dag.node_weight(src)?.event_id.clone();
+        let to = self.dag.node_weight(dst)?.event_id.clone();
+
+        Some(DataSetEdge { from, to })
     }
 }
 
