@@ -4,6 +4,8 @@ use std::fmt;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
+use super::dag::DataSetNode;
+
 /// The internal representation of an event in the DAG.
 #[derive(Default, Clone, Deserialize, Serialize)]
 pub struct Event {
@@ -32,6 +34,13 @@ impl Event {
                 }
             })
             .collect()
+    }
+
+    pub fn to_data_set_node(&self) -> DataSetNode {
+        DataSetNode {
+            id: self.event_id.clone(),
+            label: format!("{}", self),
+        }
     }
 }
 
@@ -63,11 +72,11 @@ impl PartialEq for Event {
 
 impl Eq for Event {}
 
-impl fmt::Debug for Event {
+impl fmt::Display for Event {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Sender: {}\\nType: {}\\nDepth: {}\\nEvent ID: {}",
+            "Sender: {}\nType: {}\nDepth: {}\nEvent ID: {}",
             self.sender, self.etype, self.depth, self.event_id
         )
     }
