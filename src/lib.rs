@@ -354,7 +354,7 @@ impl Model {
                         match &mut self.events_dag {
                             Some(dag) => {
                                 // Display the DAG with VisJs if it has been successfully built
-                                self.vis.display_dag(dag, "#dag-vis");
+                                self.vis.display_dag(dag, "#dag-vis", "#more-ev-target");
                             }
                             None => self.console.log("Failed to build the DAG"),
                         }
@@ -374,11 +374,6 @@ impl Model {
                 // Request for futur new events
                 self.link
                     .send_back(|_: ()| Msg::BkCmd(BkCommand::Sync))
-                    .emit(());
-
-                // TODO: do not call this right after
-                self.link
-                    .send_back(|_: ()| Msg::BkCmd(BkCommand::MoreMsg))
                     .emit(());
             }
             BkResponse::MsgGot(res) => {
@@ -478,6 +473,7 @@ impl Renderable<Model> for Model {
 
                 <li>
                     <button onclick=|_| Msg::BkCmd(BkCommand::Connect),>{ "Connect" }</button>
+                    <button id="more-ev-target", onclick=|_| Msg::BkCmd(BkCommand::MoreMsg),>{ "More events" }</button>
                     <button onclick=|_| Msg::BkCmd(BkCommand::Disconnect),>{ "Disconnect" }</button>
                     <button onclick=|_| Msg::BkCmd(BkCommand::LeaveRoom),> { "Leave room and disconnect" }</button>
                 </li>
