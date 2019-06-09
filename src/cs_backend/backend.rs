@@ -179,7 +179,7 @@ impl CSBackend {
             (session.server_name.clone(), session.access_token.clone())
         };
 
-        let uri = format!("http://{}/_matrix/client/r0/joined_rooms", server_name);
+        let uri = format!("https://{}/_matrix/client/r0/joined_rooms", server_name);
 
         let request = Request::get(uri)
             .header("Content-Type", "application/json")
