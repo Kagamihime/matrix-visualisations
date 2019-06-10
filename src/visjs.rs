@@ -10,6 +10,7 @@ use crate::model::dag::RoomEvents;
 #[derive(Default)]
 pub struct VisJsService {
     lib: Option<Value>,
+    network: Option<Value>,
     data: Option<Value>,
     earliest_events: Vec<String>,
     latest_events: Vec<String>,
@@ -23,6 +24,7 @@ impl VisJsService {
 
         VisJsService {
             lib: Some(lib),
+            network: None,
             data: None,
             earliest_events: Vec::new(),
             latest_events: Vec::new(),
@@ -53,8 +55,6 @@ impl VisJsService {
         js_serializable!(DataSet);
 
         self.data = Some(js! {
-            var vis = @{lib};
-
             var d = @{data};
 
             var min_depth = -1;
@@ -85,6 +85,14 @@ impl VisJsService {
                 nodes: nodes,
                 edges: edges
             };
+
+            return data;
+        });
+
+        self.network = Some(js! {
+            var vis = @{lib};
+
+            var data = @{&self.data};
 
             var options = {
                 layout: {
@@ -123,7 +131,7 @@ impl VisJsService {
 
             network.on("selectNode", load_more);
 
-            return data;
+            return network;
         });
 
         self.earliest_events = events_dag.earliest_events.clone();
