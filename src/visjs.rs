@@ -126,7 +126,9 @@ impl VisJsService {
             var network = new vis.Network(@{container}, data, options);
 
             function load_more() {
-                @{more_ev_btn}.click();
+                if (network.getSelectedNodes()[0] == "more_ev") {
+                    @{more_ev_btn}.click();
+                }
             }
 
             network.on("selectNode", load_more);
