@@ -55,7 +55,7 @@ pub struct Model {
 
     cs_backend: CSBackend,
     session: Arc<RwLock<Session>>,
-    events_dag: Option<RoomEvents>,
+    events_dag: Option<Arc<RwLock<RoomEvents>>>,
 }
 
 pub enum Msg {
@@ -345,13 +345,15 @@ impl Model {
                         }
 
                         // Create a new DAG if it is the initial sync
-                        self.events_dag = model::dag::RoomEvents::from_sync_response(
+                        if let Some(dag) = model::dag::RoomEvents::from_sync_response(
                             &session.room_id,
                             &session.server_name,
                             res,
-                        );
+                        ) {
+                            self.events_dag = Some(Arc::new(RwLock::new(dag)));;
+                        }
 
-                        match &mut self.events_dag {
+                        match self.events_dag.clone() {
                             Some(dag) => {
                                 // Display the DAG with VisJs if it has been successfully built
                                 self.vis.display_dag(dag, "#dag-vis", "#more-ev-target");
@@ -359,10 +361,10 @@ impl Model {
                             None => self.console.log("Failed to build the DAG"),
                         }
                     }
-                    Some(_) => match &mut self.events_dag {
+                    Some(_) => match self.events_dag.clone() {
                         // Add new events to the DAG
                         Some(dag) => {
-                            dag.add_new_events(res);
+                            dag.write().unwrap().add_new_events(res);
                             self.vis.update_dag(dag);
                         }
                         None => self.console.log("There is no DAG"),
@@ -382,10 +384,10 @@ impl Model {
                 // Save the prev batch token for the next `/messages` request
                 self.session.write().unwrap().prev_batch_token = Some(res.end);
 
-                match &mut self.events_dag {
+                match self.events_dag.clone() {
                     // Add earlier event to the DAG and display them
                     Some(dag) => {
-                        dag.add_prev_events(res.chunk);
+                        dag.write().unwrap().add_prev_events(res.chunk);
 
                         self.vis.update_dag(dag);
                     }
