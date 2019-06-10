@@ -57,13 +57,21 @@ impl VisJsService {
 
             var d = @{data};
 
+            var min_depth = -1;
+            for (let n of d.nodes) {
+                if (min_depth == -1 || n["level"] < min_depth) {
+                    min_depth = n["level"];
+                }
+            }
+
             var nodes = new vis.DataSet(d.nodes);
             var edges = new vis.DataSet(d.edges);
 
             // Add special button to load more events
             nodes.add({
                 id: "more_ev",
-                label: "Load more events"
+                label: "Load more events",
+                level: min_depth - 1
             });
             for (let ev of @{earliest_events}) {
                 edges.add({
@@ -86,7 +94,6 @@ impl VisJsService {
                         enabled: true,
                         levelSeparation: 250,
                         nodeSpacing: 500,
-                        direction: "DU",
                         sortMethod: "directed"
                     }
                 },
@@ -140,6 +147,13 @@ impl VisJsService {
                 var data = @{data};
                 var ev = @{earlier_events};
 
+                var min_depth = -1;
+                for (let n of ev.nodes) {
+                    if (min_depth == -1 || n["level"] < min_depth) {
+                        min_depth = n["level"];
+                    }
+                }
+
                 data.nodes.add(ev.nodes);
                 data.edges.add(ev.edges);
 
@@ -150,7 +164,8 @@ impl VisJsService {
                 data.nodes.remove("more_ev");
                 data.nodes.add({
                     id: "more_ev",
-                    label: "Load more events"
+                    label: "Load more events",
+                    level: min_depth - 1
                 });
                 for (let ev of @{new_earliest_events}) {
                     data.edges.add({
