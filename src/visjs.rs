@@ -1,3 +1,5 @@
+use std::sync::{Arc, RwLock};
+
 use crate::model::dag::DataSet;
 use stdweb::web;
 use stdweb::web::IParentNode;
@@ -9,8 +11,8 @@ use crate::model::dag::RoomEvents;
 pub struct VisJsService {
     lib: Option<Value>,
     data: Option<Value>,
-    earliest_event: String,
-    latest_event: String,
+    earliest_events: Vec<String>,
+    latest_events: Vec<String>,
 }
 
 impl VisJsService {
@@ -22,21 +24,22 @@ impl VisJsService {
         VisJsService {
             lib: Some(lib),
             data: None,
-            earliest_event: String::new(),
-            latest_event: String::new(),
+            earliest_events: Vec::new(),
+            latest_events: Vec::new(),
         }
     }
 
     pub fn display_dag(
         &mut self,
-        events_dag: &mut RoomEvents,
+        events_dag: Arc<RwLock<RoomEvents>>,
         container_id: &str,
         more_ev_btn_id: &str,
     ) {
         let lib = self.lib.as_ref().expect("vis library object lost");
+        let mut events_dag = events_dag.write().unwrap();
 
         let data = events_dag.create_data_set();
-        let earliest_event = &events_dag.earliest_event;
+        let earliest_events = &events_dag.earliest_events;
 
         let container = web::document()
             .query_selector(container_id)
@@ -62,11 +65,13 @@ impl VisJsService {
                 id: "more_ev",
                 label: "Load more events"
             });
-            edges.add({
-                id: "more_ev_edge",
-                from: @{earliest_event},
-                to: "more_ev"
-            });
+            for (let ev of @{earliest_events}) {
+                edges.add({
+                    id: ev,
+                    from: ev,
+                    to: "more_ev"
+                });
+            }
 
             var data = {
                 nodes: nodes,
@@ -79,8 +84,8 @@ impl VisJsService {
                     improvedLayout: true,
                     hierarchical: {
                         enabled: true,
-                        levelSeparation: 200,
-                        nodeSpacing: 300,
+                        levelSeparation: 250,
+                        nodeSpacing: 500,
                         direction: "DU",
                         sortMethod: "directed"
                     }
@@ -114,15 +119,22 @@ impl VisJsService {
             return data;
         });
 
-        self.earliest_event = events_dag.earliest_event.clone();
-        self.latest_event = events_dag.latest_event.clone();
+        self.earliest_events = events_dag.earliest_events.clone();
+        self.latest_events = events_dag.latest_events.clone();
     }
 
-    pub fn update_dag(&mut self, events_dag: &RoomEvents) {
-        if self.earliest_event != events_dag.earliest_event {
+    pub fn update_dag(&mut self, events_dag: Arc<RwLock<RoomEvents>>) {
+        let events_dag = events_dag.read().unwrap();
+
+        if self.earliest_events != events_dag.earliest_events {
+            let old_earliest_events = self.earliest_events.clone();
+            let new_earliest_events = events_dag.earliest_events.clone();
+
             let data = self.data.as_ref().expect("No data set found");
-            let earliest_event = &events_dag.earliest_event;
-            let earlier_events = events_dag.get_earlier_events(self.earliest_event.clone());
+
+            let mut earlier_events = DataSet::new();
+            events_dag
+                .add_earlier_events_to_data_set(&mut earlier_events, old_earliest_events.clone());
 
             self.data = Some(js! {
                 var data = @{data};
@@ -132,27 +144,33 @@ impl VisJsService {
                 data.edges.add(ev.edges);
 
                 // Update the position of the button to load more events
-                data.edges.remove("more_ev_edge");
+                for (let ev of @{old_earliest_events}) {
+                    data.edges.remove(ev);
+                }
                 data.nodes.remove("more_ev");
                 data.nodes.add({
                     id: "more_ev",
                     label: "Load more events"
                 });
-                data.edges.add({
-                    id: "more_ev_edge",
-                    from: @{earliest_event},
-                    to: "more_ev"
-                });
+                for (let ev of @{new_earliest_events}) {
+                    data.edges.add({
+                        id: ev,
+                        from: ev,
+                        to: "more_ev"
+                    });
+                }
 
                 return data;
             });
 
-            self.earliest_event = events_dag.earliest_event.clone();
+            self.earliest_events = events_dag.earliest_events.clone();
         }
 
-        if self.latest_event != events_dag.latest_event {
+        if self.latest_events != events_dag.latest_events {
             let data = self.data.as_ref().expect("No data set found");
-            let new_events = events_dag.get_new_events(self.latest_event.clone());
+
+            let mut new_events = DataSet::new();
+            events_dag.add_new_events_to_data_set(&mut new_events, self.latest_events.clone());
 
             self.data = Some(js! {
                 var data = @{data};
@@ -164,7 +182,7 @@ impl VisJsService {
                 return data;
             });
 
-            self.latest_event = events_dag.latest_event.clone();
+            self.latest_events = events_dag.latest_events.clone();
         }
     }
 }
