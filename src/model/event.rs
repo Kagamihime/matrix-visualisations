@@ -55,8 +55,8 @@ impl fmt::Display for Event {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Sender: {}\nType: {}\nDepth: {}\nEvent ID: {}",
-            self.sender, self.etype, self.depth, self.event_id
+            "Sender: {}\nType: {}\nDepth: {}\nEvent ID: {}\nPrev events: {:?}",
+            self.sender, self.etype, self.depth, self.event_id, self.prev_events
         )
     }
 }
