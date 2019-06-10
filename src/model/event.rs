@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::fmt;
 
 use serde_derive::{Deserialize, Serialize};
@@ -40,26 +39,6 @@ impl Event {
         DataSetNode {
             id: self.event_id.clone(),
             label: format!("{}", self),
-        }
-    }
-}
-
-impl PartialOrd for Event {
-    fn partial_cmp(&self, other: &Event) -> Option<Ordering> {
-        if self.depth == other.depth {
-            Some(self.origin_server_ts.cmp(&other.origin_server_ts))
-        } else {
-            Some(self.depth.cmp(&other.depth))
-        }
-    }
-}
-
-impl Ord for Event {
-    fn cmp(&self, other: &Event) -> Ordering {
-        if self.depth == other.depth {
-            self.origin_server_ts.cmp(&other.origin_server_ts)
-        } else {
-            self.depth.cmp(&other.depth)
         }
     }
 }
