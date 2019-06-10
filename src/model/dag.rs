@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::iter::FromIterator;
 
 use petgraph::graph::{Graph, NodeIndex};
-use petgraph::visit::EdgeRef;
+use petgraph::visit::{Bfs, EdgeRef};
 use petgraph::{Directed, Direction};
 use serde_derive::Serialize;
 use serde_json::Value as JsonValue;
@@ -18,25 +19,25 @@ pub struct RoomEvents {
     dag: Graph<Event, (), Directed>,         // The DAG of the events
     events_map: HashMap<String, NodeIndex>, // Allows to quickly locate an event in the DAG with its ID
     depth_map: HashMap<i64, Vec<NodeIndex>>, // Allows to quickly locate events at a given depth in the DAG
-    pub latest_event: String,                // The ID of the latest event in the DAG
-    pub earliest_event: String,              // The ID of the earliest event in the DAG
+    pub latest_events: Vec<String>,          // The ID of the latest event in the DAG
+    pub earliest_events: Vec<String>,        // The ID of the earliest event in the DAG
     max_depth: i64,                          // Minimal depth of the events in the DAG
     min_depth: i64,                          // Maximal depth of the events in the DAG
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct DataSet {
     nodes: Vec<DataSetNode>,
     edges: Vec<DataSetEdge>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct DataSetNode {
     pub id: String,
     pub label: String,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct DataSetEdge {
     from: String,
     to: String,
@@ -51,76 +52,25 @@ impl RoomEvents {
     ) -> Option<RoomEvents> {
         match res.rooms.join.get(room_id) {
             Some(room) => {
-                let timeline = &room.timeline.events;
+                let timeline = parse_events(&room.timeline.events);
 
-                let timeline = parse_events(timeline);
+                let mut dag = RoomEvents {
+                    room_id: room_id.to_string(),
+                    server_name: server_name.to_string(),
 
-                let mut dag: Graph<Event, (), Directed> = Graph::new();
-                let mut events_map: HashMap<String, NodeIndex> =
-                    HashMap::with_capacity(timeline.len() /*+ state.len()*/);
-                let mut depth_map: HashMap<i64, Vec<NodeIndex>> =
-                    HashMap::with_capacity(timeline.len() /*+ state.len()*/);
-                let mut latest_event = String::new();
-                let mut earliest_event = String::new();
-                let mut max_depth = -1;
-                let mut min_depth = -1;
+                    dag: Graph::new(),
+                    events_map: HashMap::with_capacity(timeline.len()),
+                    depth_map: HashMap::with_capacity(timeline.len()),
+                    latest_events: Vec::new(),
+                    earliest_events: Vec::new(),
+                    max_depth: -1,
+                    min_depth: -1,
+                };
 
-                for event in timeline.iter() {
-                    let id = &event.event_id;
-                    let depth = event.depth;
-                    let index = dag.add_node(event.clone()); // Add each event as a node in the DAG
+                dag.add_event_nodes(timeline);
+                dag.update_event_edges();
 
-                    events_map.insert(id.clone(), index); // Update the events map
-
-                    // Update the depth map
-                    match depth_map.get_mut(&depth) {
-                        None => {
-                            depth_map.insert(depth, vec![index]);
-                        }
-                        Some(v) => {
-                            v.push(index);
-                        }
-                    }
-
-                    // Update the minimal and maximal depth of the events of the DAG, as well as
-                    // the latest and earliest event
-                    if latest_event.is_empty() {
-                        latest_event = id.clone();
-                        earliest_event = id.clone();
-                        max_depth = depth;
-                        min_depth = depth;
-                    } else if let Some(latest_idx) = events_map.get(&latest_event) {
-                        if let Some(latest_ev) = dag.node_weight(*latest_idx) {
-                            if latest_ev < event {
-                                latest_event = event.event_id.clone();
-                                max_depth = event.depth;
-                            }
-                        }
-                    } else if let Some(earliest_idx) = events_map.get(&earliest_event) {
-                        if let Some(earliest_ev) = dag.node_weight(*earliest_idx) {
-                            if earliest_ev > event {
-                                earliest_event = event.event_id.clone();
-                                min_depth = event.depth;
-                            }
-                        }
-                    }
-                }
-
-                let edges = get_new_edges(&dag, &events_map, &depth_map, min_depth, max_depth);
-
-                dag.extend_with_edges(edges);
-
-                Some(RoomEvents {
-                    room_id: String::from(room_id),
-                    server_name: String::from(server_name),
-                    dag,
-                    events_map,
-                    depth_map,
-                    latest_event,
-                    earliest_event,
-                    max_depth,
-                    min_depth,
-                })
+                Some(dag)
             }
             None => None,
         }
@@ -129,67 +79,29 @@ impl RoomEvents {
     /// Adds new events to the DAG from a `SyncResponse`.
     pub fn add_new_events(&mut self, res: SyncResponse) {
         if let Some(room) = res.rooms.join.get(&self.room_id) {
-            let old_max_depth = self.max_depth;
+            let events = parse_events(&room.timeline.events);
 
-            let events = &room.timeline.events;
-
-            let events = parse_events(events);
-
-            for event in events.iter() {
-                let id = &event.event_id;
-                let depth = event.depth;
-                let index = self.dag.add_node(event.clone()); // Add each new event as a node in the DAG
-
-                self.events_map.insert(id.clone(), index); // Update the events map
-
-                // Update the depth map
-                match self.depth_map.get_mut(&depth) {
-                    None => {
-                        self.depth_map.insert(depth, vec![index]);
-                    }
-                    Some(v) => {
-                        v.push(index);
-                    }
-                }
-
-                // Update the latest event of the DAG as well as its maximal depth
-                if let Some(latest_idx) = self.events_map.get(&self.latest_event) {
-                    if let Some(latest_ev) = self.dag.node_weight(*latest_idx) {
-                        if latest_ev < event {
-                            self.latest_event = event.event_id.clone();
-                            self.max_depth = event.depth;
-                        }
-                    }
-                }
-            }
-
-            // Get the new egdes of the DAG
-            let edges = get_new_edges(
-                &self.dag,
-                &self.events_map,
-                &self.depth_map,
-                old_max_depth,
-                self.max_depth,
-            );
-
-            self.dag.extend_with_edges(edges);
+            self.add_event_nodes(events);
+            self.update_event_edges();
         }
     }
 
     /// Adds earlier `events` to the DAG.
     pub fn add_prev_events(&mut self, events: Vec<JsonValue>) {
-        let old_min_depth = self.min_depth;
-
         let events = parse_events(&events);
 
+        self.add_event_nodes(events);
+        self.update_event_edges();
+    }
+
+    fn add_event_nodes(&mut self, events: Vec<Event>) {
         for event in events.iter() {
             let id = &event.event_id;
             let depth = event.depth;
-            let index = self.dag.add_node(event.clone()); // Add each earlier event as a node in the DAG
+            let index = self.dag.add_node(event.clone()); // Add each event as a node in the DAG
 
             self.events_map.insert(id.clone(), index); // Update the events map
 
-            // Update the depth map
             match self.depth_map.get_mut(&depth) {
                 None => {
                     self.depth_map.insert(depth, vec![index]);
@@ -199,27 +111,51 @@ impl RoomEvents {
                 }
             }
 
-            // Update the earliest event of the DAG as well as its minimal depth
-            if let Some(earliest_idx) = self.events_map.get(&self.earliest_event) {
-                if let Some(earliest_ev) = self.dag.node_weight(*earliest_idx) {
-                    if earliest_ev > event {
-                        self.earliest_event = event.event_id.clone();
-                        self.min_depth = event.depth;
-                    }
-                }
+            if self.max_depth == -1 || depth > self.max_depth {
+                self.max_depth = depth;
+            }
+
+            if self.min_depth == -1 || depth < self.min_depth {
+                self.min_depth = depth;
+            }
+        }
+    }
+
+    fn update_event_edges(&mut self) {
+        // Update the edges in the DAG
+        for src_idx in self.dag.node_indices() {
+            let prev_indices: Vec<NodeIndex> = self
+                .dag
+                .node_weight(src_idx)
+                .unwrap()
+                .get_prev_events()
+                .iter()
+                .filter(|id| self.events_map.get(**id).is_some()) // Only take into account events which are really in the DAG
+                .map(|id| *self.events_map.get(*id).unwrap())
+                .collect();
+
+            for dst_idx in prev_indices {
+                self.dag.update_edge(src_idx, dst_idx, ());
             }
         }
 
-        // Get the new egdes of the DAG
-        let edges = get_new_edges(
-            &self.dag,
-            &self.events_map,
-            &self.depth_map,
-            self.min_depth,
-            old_min_depth,
-        );
+        self.latest_events.clear();
+        self.earliest_events.clear();
 
-        self.dag.extend_with_edges(edges);
+        // Update the earliest and latest events of the DAG
+        for idx in self.dag.node_indices() {
+            if self.dag.edges_directed(idx, Direction::Outgoing).count() == 0 {
+                let id = self.dag.node_weight(idx).unwrap().event_id.clone();
+
+                self.earliest_events.push(id);
+            }
+
+            if self.dag.edges_directed(idx, Direction::Incoming).count() == 0 {
+                let id = self.dag.node_weight(idx).unwrap().event_id.clone();
+
+                self.latest_events.push(id);
+            }
+        }
     }
 
     pub fn create_data_set(&mut self) -> DataSet {
@@ -253,92 +189,52 @@ impl RoomEvents {
         DataSet { nodes, edges }
     }
 
-    pub fn get_earlier_events(&self, from: String) -> DataSet {
-        let events = self.older_events(&from);
-
-        let edges = self
-            .older_edges(&events)
+    pub fn add_earlier_events_to_data_set(&self, data_set: &mut DataSet, from: Vec<String>) {
+        let from_indices: HashSet<NodeIndex> = from
             .iter()
-            .map(|e| self.to_data_set_edge(*e).unwrap())
+            .map(|id| *self.events_map.get(id).unwrap())
             .collect();
 
-        let nodes = events.iter().map(|ev| ev.to_data_set_node()).collect();
+        let (new_node_indices, new_edges) = new_nodes_edges(&self.dag, from_indices);
 
-        DataSet { nodes, edges }
+        new_node_indices
+            .iter()
+            .map(|idx| self.dag.node_weight(*idx).unwrap().to_data_set_node())
+            .for_each(|node| data_set.nodes.push(node));
+
+        new_edges
+            .iter()
+            .map(|(src, dst)| self.to_data_set_edge((*src, *dst)).unwrap())
+            .for_each(|edge| data_set.edges.push(edge));
     }
 
-    pub fn get_new_events(&self, from: String) -> DataSet {
-        let events = self.newer_events(&from);
+    pub fn add_new_events_to_data_set(&self, data_set: &mut DataSet, from: Vec<String>) {
+        // TODO: Make a shadow copy instead of a real one
+        let mut rev_dag = self.dag.clone();
+        rev_dag.reverse();
 
-        let edges = self
-            .newer_edges(&events)
+        let from_indices: HashSet<NodeIndex> = from
             .iter()
-            .map(|e| self.to_data_set_edge(*e).unwrap())
+            .map(|id| *self.events_map.get(id).unwrap())
             .collect();
 
-        let nodes = events.iter().map(|ev| ev.to_data_set_node()).collect();
+        let (new_node_indices, rev_new_edges) = new_nodes_edges(&rev_dag, from_indices);
 
-        DataSet { nodes, edges }
-    }
+        // We have to reverse the edges again
+        let new_edges: HashSet<(NodeIndex, NodeIndex)> = rev_new_edges
+            .into_iter()
+            .map(|(src, dst)| (dst, src))
+            .collect();
 
-    fn older_events(&self, from: &str) -> Vec<&Event> {
-        let from_idx = *self.events_map.get(from).unwrap();
-        let mut events: Vec<&Event> = Vec::new();
+        new_node_indices
+            .iter()
+            .map(|idx| self.dag.node_weight(*idx).unwrap().to_data_set_node())
+            .for_each(|node| data_set.nodes.push(node));
 
-        if let Some(from_event) = self.dag.node_weight(from_idx) {
-            events = self
-                .dag
-                .node_indices()
-                .map(|i| self.dag.node_weight(i).expect("wrong index"))
-                .filter(|&ev| ev < from_event)
-                .collect();
-        }
-
-        events
-    }
-
-    fn newer_events(&self, from: &str) -> Vec<&Event> {
-        let from_idx = *self.events_map.get(from).unwrap();
-        let mut events: Vec<&Event> = Vec::new();
-
-        if let Some(from_event) = self.dag.node_weight(from_idx) {
-            events = self
-                .dag
-                .node_indices()
-                .map(|i| self.dag.node_weight(i).expect("wrong index"))
-                .filter(|&ev| ev > from_event)
-                .collect();
-        }
-
-        events
-    }
-
-    fn older_edges(&self, events: &Vec<&Event>) -> Vec<(NodeIndex, NodeIndex)> {
-        let mut edges = Vec::new();
-
-        for ev in events {
-            let idx = self.events_map.get(&ev.event_id).unwrap();
-
-            for e in self.dag.edges_directed(*idx, Direction::Incoming) {
-                edges.push((e.source(), e.target()));
-            }
-        }
-
-        edges
-    }
-
-    fn newer_edges(&self, events: &Vec<&Event>) -> Vec<(NodeIndex, NodeIndex)> {
-        let mut edges = Vec::new();
-
-        for ev in events {
-            let idx = self.events_map.get(&ev.event_id).unwrap();
-
-            for e in self.dag.edges_directed(*idx, Direction::Outgoing) {
-                edges.push((e.source(), e.target()));
-            }
-        }
-
-        edges
+        new_edges
+            .iter()
+            .map(|(src, dst)| self.to_data_set_edge((*src, *dst)).unwrap())
+            .for_each(|edge| data_set.edges.push(edge));
     }
 
     fn to_data_set_edge(&self, (src, dst): (NodeIndex, NodeIndex)) -> Option<DataSetEdge> {
@@ -346,6 +242,15 @@ impl RoomEvents {
         let to = self.dag.node_weight(dst)?.event_id.clone();
 
         Some(DataSetEdge { from, to })
+    }
+}
+
+impl DataSet {
+    pub fn new() -> DataSet {
+        DataSet {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        }
     }
 }
 
@@ -362,31 +267,35 @@ fn parse_events(json_events: &Vec<JsonValue>) -> Vec<Event> {
         .collect()
 }
 
-// Computes the list of the missing edges in the DAG.
-fn get_new_edges(
-    dag: &Graph<Event, (), Directed>,
-    events_map: &HashMap<String, NodeIndex>,
-    depth_map: &HashMap<i64, Vec<NodeIndex>>,
-    min_depth: i64,
-    max_depth: i64,
-) -> Vec<(NodeIndex, NodeIndex)> {
-    let mut edges = Vec::new();
+fn new_nodes_edges(
+    dag: &Graph<Event, ()>,
+    from_indices: HashSet<NodeIndex>,
+) -> (HashSet<NodeIndex>, HashSet<(NodeIndex, NodeIndex)>) {
+    let mut node_indices: HashSet<NodeIndex> = HashSet::from_iter(from_indices.iter().map(|i| *i));
 
-    for d in (min_depth..=max_depth).rev() {
-        if let Some(indices) = depth_map.get(&d) {
-            for idx in indices {
-                if let Some(src_ev) = dag.node_weight(*idx) {
-                    for dst_id in src_ev.get_prev_events() {
-                        if let Some(dst_idx) = events_map.get(dst_id) {
-                            if dag.find_edge(*idx, *dst_idx).is_none() {
-                                edges.push((*idx, *dst_idx));
-                            }
-                        }
-                    }
-                }
-            }
+    for &from_idx in from_indices.iter() {
+        let mut bfs = Bfs::new(&dag, from_idx);
+
+        while let Some(idx) = bfs.next(&dag) {
+            node_indices.insert(idx);
         }
     }
 
-    edges
+    let new_node_indices: HashSet<NodeIndex> = node_indices
+        .difference(&from_indices)
+        .map(|idx| *idx)
+        .collect();
+
+    let mut new_edges: HashSet<(NodeIndex, NodeIndex)> = HashSet::new();
+
+    for edges in new_node_indices
+        .iter()
+        .map(|idx| dag.edges_directed(*idx, Direction::Incoming))
+    {
+        for e in edges {
+            new_edges.insert((e.source(), e.target()));
+        }
+    }
+
+    (new_node_indices, new_edges)
 }
