@@ -35,6 +35,7 @@ pub struct DataSet {
 pub struct DataSetNode {
     pub id: String,
     pub label: String,
+    pub level: i64,
 }
 
 #[derive(Debug, Serialize)]

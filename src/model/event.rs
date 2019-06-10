@@ -39,6 +39,7 @@ impl Event {
         DataSetNode {
             id: self.event_id.clone(),
             label: format!("{}", self),
+            level: self.depth,
         }
     }
 }
