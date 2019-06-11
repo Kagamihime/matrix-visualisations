@@ -3,7 +3,7 @@ use std::fmt;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use super::dag::DataSetNode;
+use super::dag::{DataSetNode, NodeColor};
 
 /// The internal representation of an event in the DAG.
 #[derive(Default, Clone, Deserialize, Serialize)]
@@ -35,11 +35,21 @@ impl Event {
             .collect()
     }
 
-    pub fn to_data_set_node(&self) -> DataSetNode {
+    pub fn to_data_set_node(&self, server_name: &str) -> DataSetNode {
+        let (border_color, background_color) = if self.origin == server_name {
+            ("#006633".to_string(), "#009900".to_string())
+        } else {
+            ("#990000".to_string(), "#ff6600".to_string())
+        };
+
         DataSetNode {
             id: self.event_id.clone(),
             label: format!("{}", self),
             level: self.depth,
+            color: NodeColor {
+                border: border_color,
+                background: background_color,
+            },
         }
     }
 }
