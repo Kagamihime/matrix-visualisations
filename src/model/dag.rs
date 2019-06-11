@@ -7,8 +7,9 @@ use petgraph::{Directed, Direction};
 use serde_derive::Serialize;
 use serde_json::Value as JsonValue;
 
-use super::event::Event;
 use crate::cs_backend::backend::SyncResponse;
+
+use super::event::Event;
 
 /// The internal representation of the events DAG of the room being observed as well as various
 /// informations and `HashMap`s which makes easier to locate the events.
@@ -36,6 +37,13 @@ pub struct DataSetNode {
     pub id: String,
     pub label: String,
     pub level: i64,
+    pub color: NodeColor,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NodeColor {
+    pub border: String,
+    pub background: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -160,10 +168,12 @@ impl RoomEvents {
     }
 
     pub fn create_data_set(&mut self) -> DataSet {
+        let server_name = self.server_name.clone();
+
         let nodes: Vec<DataSetNode> = self
             .dag
             .node_weights_mut()
-            .map(|w| w.to_data_set_node())
+            .map(|w| w.to_data_set_node(&server_name))
             .collect();
 
         let edges: Vec<DataSetEdge> = self
@@ -200,7 +210,12 @@ impl RoomEvents {
 
         new_node_indices
             .iter()
-            .map(|idx| self.dag.node_weight(*idx).unwrap().to_data_set_node())
+            .map(|idx| {
+                self.dag
+                    .node_weight(*idx)
+                    .unwrap()
+                    .to_data_set_node(&self.server_name)
+            })
             .for_each(|node| data_set.nodes.push(node));
 
         new_edges
@@ -229,7 +244,12 @@ impl RoomEvents {
 
         new_node_indices
             .iter()
-            .map(|idx| self.dag.node_weight(*idx).unwrap().to_data_set_node())
+            .map(|idx| {
+                self.dag
+                    .node_weight(*idx)
+                    .unwrap()
+                    .to_data_set_node(&self.server_name)
+            })
             .for_each(|node| data_set.nodes.push(node));
 
         new_edges
