@@ -1,5 +1,28 @@
+.to-hide {
+    display: none;
+}
+
+.view {
+    padding: 6px;
+    display: grid;
+    grid-template-columns: 600px 700px;
+    grid-gap: 12px;
+}
+
 #dag-vis {
-    width: 1000px;
-    height: 1000px;
+    width: 600px;
+    height: 900px;
     border: 1px solid lightgray;
+
+    grid-column: 1;
+}
+
+#event-body {
+    width: 700px;
+    height: 900px;
+    padding: 6px;
+    background-color: lightgray;
+    overflow: auto;
+
+    grid-column: 2;
 }
