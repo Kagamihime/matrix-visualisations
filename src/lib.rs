@@ -16,6 +16,9 @@ mod visjs;
 use std::sync::{Arc, RwLock};
 
 use failure::Error;
+use stdweb::unstable::TryInto;
+use stdweb::web;
+use stdweb::web::IParentNode;
 use yew::services::fetch::FetchTask;
 use yew::services::ConsoleService;
 use yew::{html, Callback, Component, ComponentLink, Html, Renderable, ShouldRender};
@@ -56,10 +59,12 @@ pub struct Model {
     cs_backend: CSBackend,
     session: Arc<RwLock<Session>>,
     events_dag: Option<Arc<RwLock<RoomEvents>>>,
+    event_body: Option<String>,
 }
 
 pub enum Msg {
     UI(UIEvent),
+    UICmd(UICommand),
     BkCmd(BkCommand),
     BkRes(BkResponse),
 }
@@ -71,6 +76,10 @@ pub enum UIEvent {
 
     Username(html::ChangeData),
     Password(html::ChangeData),
+}
+
+pub enum UICommand {
+    DisplayEventBody,
 }
 
 /// These messages are used by the frontend to send commands to the backend.
@@ -170,12 +179,14 @@ impl Component for Model {
             cs_backend: CSBackend::with_session(new_session.clone()),
             session: new_session,
             events_dag: None,
+            event_body: None,
         }
     }
 
     fn update(&mut self, msg: Self::Message) -> ShouldRender {
         match msg {
             Msg::UI(ui) => self.process_ui_event(ui),
+            Msg::UICmd(cmd) => self.process_ui_command(cmd),
             Msg::BkCmd(cmd) => self.process_bk_command(cmd),
             Msg::BkRes(res) => self.process_bk_response(res),
         }
@@ -207,6 +218,28 @@ impl Model {
             UIEvent::Password(p) => {
                 if let html::ChangeData::Value(p) = p {
                     self.session.write().unwrap().password = p;
+                }
+            }
+        }
+    }
+
+    fn process_ui_command(&mut self, cmd: UICommand) {
+        match cmd {
+            UICommand::DisplayEventBody => {
+                let input: web::html_element::InputElement = web::document()
+                    .query_selector("#selected-event")
+                    .expect("Couldn't get document element")
+                    .expect("Couldn't get document element")
+                    .try_into()
+                    .unwrap();
+                let event_id = input.raw_value();
+
+                if let Some(dag) = &self.events_dag {
+                    self.event_body = dag
+                        .read()
+                        .unwrap()
+                        .get_event(&event_id)
+                        .map(|ev| serde_json::to_string_pretty(ev).unwrap());
                 }
             }
         }
@@ -356,7 +389,13 @@ impl Model {
                         match self.events_dag.clone() {
                             Some(dag) => {
                                 // Display the DAG with VisJs if it has been successfully built
-                                self.vis.display_dag(dag, "#dag-vis", "#more-ev-target");
+                                self.vis.display_dag(
+                                    dag,
+                                    "#dag-vis",
+                                    "#more-ev-target",
+                                    "#selected-event",
+                                    "#display-body-target",
+                                );
                             }
                             None => self.console.log("Failed to build the DAG"),
                         }
@@ -459,6 +498,21 @@ impl Model {
             }
         }
     }
+
+    fn display_body(&self) -> Html<Model> {
+        match &self.event_body {
+            Some(body) => {
+                html! {
+                    <pre><code>{ body }</code></pre>
+                }
+            }
+            None => {
+                html! {
+                    <p>{ "No JSON body to show yet" }</p>
+                }
+            }
+        }
+    }
 }
 
 impl Renderable<Model> for Model {
@@ -475,14 +529,26 @@ impl Renderable<Model> for Model {
 
                 <li>
                     <button onclick=|_| Msg::BkCmd(BkCommand::Connect),>{ "Connect" }</button>
-                    <button id="more-ev-target", onclick=|_| Msg::BkCmd(BkCommand::MoreMsg),>{ "More events" }</button>
                     <button onclick=|_| Msg::BkCmd(BkCommand::Disconnect),>{ "Disconnect" }</button>
                     <button onclick=|_| Msg::BkCmd(BkCommand::LeaveRoom),> { "Leave room and disconnect" }</button>
                 </li>
             </ul>
 
-            <section id="dag-vis",>
+            <section class="to-hide",>
+                <p>{ "The elements in this section should be hidden" }</p>
+                <button id="more-ev-target", onclick=|_| Msg::BkCmd(BkCommand::MoreMsg),>{ "More events" }</button>
+                <input type="text", id="selected-event",></input>
+                <button id="display-body-target", onclick=|_| Msg::UICmd(UICommand::DisplayEventBody),>{ "Display body" }</button>
             </section>
+
+            <div class="view",>
+                <section id="dag-vis",>
+                </section>
+
+                <section id="event-body",>
+                { self.display_body() }
+                </section>
+            </div>
         }
     }
 }

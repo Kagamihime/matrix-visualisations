@@ -36,6 +36,8 @@ impl VisJsService {
         events_dag: Arc<RwLock<RoomEvents>>,
         container_id: &str,
         more_ev_btn_id: &str,
+        selected_event_input_id: &str,
+        display_body_btn_id: &str,
     ) {
         let lib = self.lib.as_ref().expect("vis library object lost");
         let mut events_dag = events_dag.write().unwrap();
@@ -49,6 +51,14 @@ impl VisJsService {
             .expect("Couldn't get document element");
         let more_ev_btn = web::document()
             .query_selector(more_ev_btn_id)
+            .expect("Couldn't get document element")
+            .expect("Couldn't get document element");
+        let selected_event_input = web::document()
+            .query_selector(selected_event_input_id)
+            .expect("Couldn't get document element")
+            .expect("Couldn't get document element");
+        let display_body_btn = web::document()
+            .query_selector(display_body_btn_id)
             .expect("Couldn't get document element")
             .expect("Couldn't get document element");
 
@@ -125,13 +135,24 @@ impl VisJsService {
 
             var network = new vis.Network(@{container}, data, options);
 
-            function load_more() {
-                if (network.getSelectedNodes()[0] == "more_ev") {
+            function select_node() {
+                let id = network.getSelectedNodes()[0];
+
+                if (id == "more_ev") {
                     @{more_ev_btn}.click();
                 }
             }
 
-            network.on("selectNode", load_more);
+            network.on("selectNode", select_node);
+
+            function display_json_body(ev) {
+                let id_input = @{selected_event_input};
+
+                id_input.value = ev.nodes[0];
+                @{display_body_btn}.click();
+            }
+
+            network.on("doubleClick", display_json_body);
 
             return network;
         });
