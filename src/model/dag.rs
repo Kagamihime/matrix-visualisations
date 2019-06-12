@@ -167,6 +167,12 @@ impl RoomEvents {
         }
     }
 
+    pub fn get_event(&self, id: &str) -> Option<&Event> {
+        self.events_map
+            .get(id)
+            .map(|idx| self.dag.node_weight(*idx).unwrap())
+    }
+
     pub fn create_data_set(&mut self) -> DataSet {
         let server_name = self.server_name.clone();
 
