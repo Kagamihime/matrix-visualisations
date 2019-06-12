@@ -123,7 +123,8 @@ impl VisJsService {
                     }
                 },
                 edges: {
-                    arrows: "to"
+                    arrows: "to",
+                    smooth: true
                 },
                 interaction: {
                     dragNodes: false
