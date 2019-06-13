@@ -1,4 +1,4 @@
-use std::fmt;
+use std::collections::HashSet;
 
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -26,6 +26,19 @@ pub struct Event {
     signatures: JsonValue,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Field {
+    Sender,
+    Origin,
+    OriginServerTS,
+    Type,
+    StateKey,
+    PrevEvents,
+    Depth,
+    Redacts,
+    EventID,
+}
+
 impl Event {
     /// This function is needed because the content of a the `prev_events` field can change
     /// across the versions of rooms.
@@ -42,7 +55,7 @@ impl Event {
             .collect()
     }
 
-    pub fn to_data_set_node(&self, server_name: &str) -> DataSetNode {
+    pub fn to_data_set_node(&self, server_name: &str, fields: &HashSet<Field>) -> DataSetNode {
         let (border_color, background_color) = if self.origin == server_name {
             ("#006633".to_string(), "#009900".to_string())
         } else {
@@ -51,13 +64,69 @@ impl Event {
 
         DataSetNode {
             id: self.event_id.clone(),
-            label: format!("{}", self),
+            label: self.label(&fields),
             level: self.depth,
             color: NodeColor {
                 border: border_color,
                 background: background_color,
             },
         }
+    }
+
+    fn label(&self, fields: &HashSet<Field>) -> String {
+        let mut label = String::new();
+
+        if fields.contains(&Field::Sender) {
+            label.push_str(&format!("Sender: {}\n", self.sender));
+        }
+
+        if fields.contains(&Field::Origin) {
+            label.push_str(&format!("Origin: {}\n", self.origin));
+        }
+
+        if fields.contains(&Field::OriginServerTS) {
+            label.push_str(&format!(
+                "Origin server time stamp: {}\n",
+                self.origin_server_ts
+            ));
+        }
+
+        if fields.contains(&Field::Type) {
+            label.push_str(&format!("Type: {}\n", self.etype));
+        }
+
+        if fields.contains(&Field::StateKey) {
+            if let Some(state_key) = &self.state_key {
+                label.push_str(&format!("State key: {}\n", state_key));
+            }
+        }
+
+        if fields.contains(&Field::PrevEvents) {
+            label.push_str("Previous events:");
+
+            for prev_ev in self.get_prev_events() {
+                label.push(' ');
+                label.push_str(prev_ev);
+            }
+
+            label.push('\n');
+        }
+
+        if fields.contains(&Field::Depth) {
+            label.push_str(&format!("Depth: {}\n", self.depth));
+        }
+
+        if fields.contains(&Field::Redacts) {
+            if let Some(redacts) = &self.redacts {
+                label.push_str(&format!("Redacts: {}\n", redacts));
+            }
+        }
+
+        if fields.contains(&Field::EventID) {
+            label.push_str(&format!("Event ID: {}\n", self.event_id));
+        }
+
+        label.trim_end().to_string()
     }
 }
 
@@ -68,13 +137,3 @@ impl PartialEq for Event {
 }
 
 impl Eq for Event {}
-
-impl fmt::Display for Event {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Sender: {}\nType: {}\nDepth: {}\nEvent ID: {}\nPrev events: {:?}",
-            self.sender, self.etype, self.depth, self.event_id, self.prev_events
-        )
-    }
-}
