@@ -9,13 +9,14 @@ use serde_json::Value as JsonValue;
 
 use crate::cs_backend::backend::SyncResponse;
 
-use super::event::Event;
+use super::event::{Event, Field};
 
 /// The internal representation of the events DAG of the room being observed as well as various
 /// informations and `HashMap`s which makes easier to locate the events.
 pub struct RoomEvents {
     room_id: String,     // The ID of the room
     server_name: String, // The name of the server this DAG was retrieved from
+    fields: HashSet<Field>,
 
     dag: Graph<Event, (), Directed>,         // The DAG of the events
     events_map: HashMap<String, NodeIndex>, // Allows to quickly locate an event in the DAG with its ID
@@ -57,6 +58,7 @@ impl RoomEvents {
     pub fn from_sync_response(
         room_id: &str,
         server_name: &str,
+        fields: &HashSet<Field>,
         res: SyncResponse,
     ) -> Option<RoomEvents> {
         match res.rooms.join.get(room_id) {
@@ -66,6 +68,7 @@ impl RoomEvents {
                 let mut dag = RoomEvents {
                     room_id: room_id.to_string(),
                     server_name: server_name.to_string(),
+                    fields: fields.clone(),
 
                     dag: Graph::new(),
                     events_map: HashMap::with_capacity(timeline.len()),
@@ -175,11 +178,12 @@ impl RoomEvents {
 
     pub fn create_data_set(&mut self) -> DataSet {
         let server_name = self.server_name.clone();
+        let fields = self.fields.clone();
 
         let nodes: Vec<DataSetNode> = self
             .dag
             .node_weights_mut()
-            .map(|w| w.to_data_set_node(&server_name))
+            .map(|w| w.to_data_set_node(&server_name, &fields))
             .collect();
 
         let edges: Vec<DataSetEdge> = self
@@ -220,7 +224,7 @@ impl RoomEvents {
                 self.dag
                     .node_weight(*idx)
                     .unwrap()
-                    .to_data_set_node(&self.server_name)
+                    .to_data_set_node(&self.server_name, &self.fields)
             })
             .for_each(|node| data_set.nodes.push(node));
 
@@ -254,7 +258,7 @@ impl RoomEvents {
                 self.dag
                     .node_weight(*idx)
                     .unwrap()
-                    .to_data_set_node(&self.server_name)
+                    .to_data_set_node(&self.server_name, &self.fields)
             })
             .for_each(|node| data_set.nodes.push(node));
 
