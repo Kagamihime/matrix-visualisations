@@ -272,6 +272,18 @@ impl Model {
                 } else {
                     fc.fields.remove(&Field::Sender);
                 }
+
+                if let Some(events_dag) = self.events_dag.as_ref() {
+                    let mut events_dag = events_dag.write().unwrap();
+
+                    events_dag.change_fields(&fc.fields);
+                }
+
+                if self.vis.is_active() {
+                    if let Some(events_dag) = self.events_dag.as_ref() {
+                        self.vis.update_labels(events_dag.clone());
+                    }
+                }
             }
             UIEvent::ToggleOrigin => {
                 let fc = &mut self.fields_choice;
@@ -282,6 +294,18 @@ impl Model {
                     fc.fields.insert(Field::Origin);
                 } else {
                     fc.fields.remove(&Field::Origin);
+                }
+
+                if let Some(events_dag) = self.events_dag.as_ref() {
+                    let mut events_dag = events_dag.write().unwrap();
+
+                    events_dag.change_fields(&fc.fields);
+                }
+
+                if self.vis.is_active() {
+                    if let Some(events_dag) = self.events_dag.as_ref() {
+                        self.vis.update_labels(events_dag.clone());
+                    }
                 }
             }
             UIEvent::ToggleOriginServerTS => {
@@ -294,6 +318,18 @@ impl Model {
                 } else {
                     fc.fields.remove(&Field::OriginServerTS);
                 }
+
+                if let Some(events_dag) = self.events_dag.as_ref() {
+                    let mut events_dag = events_dag.write().unwrap();
+
+                    events_dag.change_fields(&fc.fields);
+                }
+
+                if self.vis.is_active() {
+                    if let Some(events_dag) = self.events_dag.as_ref() {
+                        self.vis.update_labels(events_dag.clone());
+                    }
+                }
             }
             UIEvent::ToggleType => {
                 let fc = &mut self.fields_choice;
@@ -304,6 +340,18 @@ impl Model {
                     fc.fields.insert(Field::Type);
                 } else {
                     fc.fields.remove(&Field::Type);
+                }
+
+                if let Some(events_dag) = self.events_dag.as_ref() {
+                    let mut events_dag = events_dag.write().unwrap();
+
+                    events_dag.change_fields(&fc.fields);
+                }
+
+                if self.vis.is_active() {
+                    if let Some(events_dag) = self.events_dag.as_ref() {
+                        self.vis.update_labels(events_dag.clone());
+                    }
                 }
             }
             UIEvent::ToggleStateKey => {
@@ -316,6 +364,18 @@ impl Model {
                 } else {
                     fc.fields.remove(&Field::StateKey);
                 }
+
+                if let Some(events_dag) = self.events_dag.as_ref() {
+                    let mut events_dag = events_dag.write().unwrap();
+
+                    events_dag.change_fields(&fc.fields);
+                }
+
+                if self.vis.is_active() {
+                    if let Some(events_dag) = self.events_dag.as_ref() {
+                        self.vis.update_labels(events_dag.clone());
+                    }
+                }
             }
             UIEvent::TogglePrevEvents => {
                 let fc = &mut self.fields_choice;
@@ -326,6 +386,18 @@ impl Model {
                     fc.fields.insert(Field::PrevEvents);
                 } else {
                     fc.fields.remove(&Field::PrevEvents);
+                }
+
+                if let Some(events_dag) = self.events_dag.as_ref() {
+                    let mut events_dag = events_dag.write().unwrap();
+
+                    events_dag.change_fields(&fc.fields);
+                }
+
+                if self.vis.is_active() {
+                    if let Some(events_dag) = self.events_dag.as_ref() {
+                        self.vis.update_labels(events_dag.clone());
+                    }
                 }
             }
             UIEvent::ToggleDepth => {
@@ -338,6 +410,18 @@ impl Model {
                 } else {
                     fc.fields.remove(&Field::Depth);
                 }
+
+                if let Some(events_dag) = self.events_dag.as_ref() {
+                    let mut events_dag = events_dag.write().unwrap();
+
+                    events_dag.change_fields(&fc.fields);
+                }
+
+                if self.vis.is_active() {
+                    if let Some(events_dag) = self.events_dag.as_ref() {
+                        self.vis.update_labels(events_dag.clone());
+                    }
+                }
             }
             UIEvent::ToggleRedacts => {
                 let fc = &mut self.fields_choice;
@@ -349,6 +433,18 @@ impl Model {
                 } else {
                     fc.fields.remove(&Field::Redacts);
                 }
+
+                if let Some(events_dag) = self.events_dag.as_ref() {
+                    let mut events_dag = events_dag.write().unwrap();
+
+                    events_dag.change_fields(&fc.fields);
+                }
+
+                if self.vis.is_active() {
+                    if let Some(events_dag) = self.events_dag.as_ref() {
+                        self.vis.update_labels(events_dag.clone());
+                    }
+                }
             }
             UIEvent::ToggleEventID => {
                 let fc = &mut self.fields_choice;
@@ -359,6 +455,18 @@ impl Model {
                     fc.fields.insert(Field::EventID);
                 } else {
                     fc.fields.remove(&Field::EventID);
+                }
+
+                if let Some(events_dag) = self.events_dag.as_ref() {
+                    let mut events_dag = events_dag.write().unwrap();
+
+                    events_dag.change_fields(&fc.fields);
+                }
+
+                if self.vis.is_active() {
+                    if let Some(events_dag) = self.events_dag.as_ref() {
+                        self.vis.update_labels(events_dag.clone());
+                    }
                 }
             }
         }
