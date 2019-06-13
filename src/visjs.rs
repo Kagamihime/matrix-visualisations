@@ -232,4 +232,25 @@ impl VisJsService {
             self.latest_events = events_dag.latest_events.clone();
         }
     }
+
+    pub fn update_labels(&mut self, events_dag: Arc<RwLock<RoomEvents>>) {
+        self.update_dag(events_dag.clone());
+
+        let mut events_dag = events_dag.write().unwrap();
+        let new_data = events_dag.create_data_set();
+        let data = self.data.as_ref().expect("No data set found");
+
+        self.data = Some(js! {
+            var data = @{data};
+            var new_data = @{new_data};
+
+            data.nodes.update(new_data.nodes);
+
+            return data;
+        });
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.network.is_some()
+    }
 }

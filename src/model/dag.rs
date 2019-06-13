@@ -268,6 +268,10 @@ impl RoomEvents {
             .for_each(|edge| data_set.edges.push(edge));
     }
 
+    pub fn change_fields(&mut self, fields: &HashSet<Field>) {
+        self.fields = fields.clone();
+    }
+
     fn to_data_set_edge(&self, (src, dst): (NodeIndex, NodeIndex)) -> Option<DataSetEdge> {
         let from = self.dag.node_weight(src)?.event_id.clone();
         let to = self.dag.node_weight(dst)?.event_id.clone();
