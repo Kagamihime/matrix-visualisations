@@ -13,6 +13,7 @@ mod cs_backend;
 mod model;
 mod visjs;
 
+use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
 use failure::Error;
@@ -28,6 +29,7 @@ use cs_backend::backend::{
 };
 use cs_backend::session::Session;
 use model::dag::RoomEvents;
+use model::event::Field;
 use visjs::VisJsService;
 
 pub struct Model {
@@ -73,6 +75,8 @@ struct FieldsChoice {
     depth: bool,
     redacts: bool,
     event_id: bool,
+
+    fields: HashSet<Field>,
 }
 
 pub enum Msg {
@@ -152,6 +156,8 @@ impl Component for Model {
             depth: false,
             redacts: false,
             event_id: true,
+
+            fields: [Field::EventID].iter().cloned().collect(),
         };
 
         Model {
@@ -215,6 +221,7 @@ impl Component for Model {
             session: new_session,
             events_dag: None,
             event_body: None,
+            fields_choice: default_fields_choice,
         }
     }
 
@@ -256,22 +263,103 @@ impl Model {
                 }
             }
             UIEvent::ToggleSender => {
+                let fc = &mut self.fields_choice;
+
+                fc.sender = !fc.sender;
+
+                if fc.sender {
+                    fc.fields.insert(Field::Sender);
+                } else {
+                    fc.fields.remove(&Field::Sender);
+                }
             }
             UIEvent::ToggleOrigin => {
+                let fc = &mut self.fields_choice;
+
+                fc.origin = !fc.origin;
+
+                if fc.origin {
+                    fc.fields.insert(Field::Origin);
+                } else {
+                    fc.fields.remove(&Field::Origin);
+                }
             }
             UIEvent::ToggleOriginServerTS => {
+                let fc = &mut self.fields_choice;
+
+                fc.origin_server_ts = !fc.origin_server_ts;
+
+                if fc.origin_server_ts {
+                    fc.fields.insert(Field::OriginServerTS);
+                } else {
+                    fc.fields.remove(&Field::OriginServerTS);
+                }
             }
             UIEvent::ToggleType => {
+                let fc = &mut self.fields_choice;
+
+                fc.etype = !fc.etype;
+
+                if fc.etype {
+                    fc.fields.insert(Field::Type);
+                } else {
+                    fc.fields.remove(&Field::Type);
+                }
             }
             UIEvent::ToggleStateKey => {
+                let fc = &mut self.fields_choice;
+
+                fc.state_key = !fc.state_key;
+
+                if fc.state_key {
+                    fc.fields.insert(Field::StateKey);
+                } else {
+                    fc.fields.remove(&Field::StateKey);
+                }
             }
             UIEvent::TogglePrevEvents => {
+                let fc = &mut self.fields_choice;
+
+                fc.prev_events = !fc.prev_events;
+
+                if fc.prev_events {
+                    fc.fields.insert(Field::PrevEvents);
+                } else {
+                    fc.fields.remove(&Field::PrevEvents);
+                }
             }
             UIEvent::ToggleDepth => {
+                let fc = &mut self.fields_choice;
+
+                fc.depth = !fc.depth;
+
+                if fc.depth {
+                    fc.fields.insert(Field::Depth);
+                } else {
+                    fc.fields.remove(&Field::Depth);
+                }
             }
             UIEvent::ToggleRedacts => {
+                let fc = &mut self.fields_choice;
+
+                fc.redacts = !fc.redacts;
+
+                if fc.redacts {
+                    fc.fields.insert(Field::Redacts);
+                } else {
+                    fc.fields.remove(&Field::Redacts);
+                }
             }
             UIEvent::ToggleEventID => {
+                let fc = &mut self.fields_choice;
+
+                fc.event_id = !fc.event_id;
+
+                if fc.event_id {
+                    fc.fields.insert(Field::EventID);
+                } else {
+                    fc.fields.remove(&Field::EventID);
+                }
             }
         }
     }
@@ -434,6 +522,7 @@ impl Model {
                         if let Some(dag) = model::dag::RoomEvents::from_sync_response(
                             &session.room_id,
                             &session.server_name,
+                            &self.fields_choice.fields,
                             res,
                         ) {
                             self.events_dag = Some(Arc::new(RwLock::new(dag)));;
