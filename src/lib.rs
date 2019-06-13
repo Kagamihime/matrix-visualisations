@@ -60,6 +60,19 @@ pub struct Model {
     session: Arc<RwLock<Session>>,
     events_dag: Option<Arc<RwLock<RoomEvents>>>,
     event_body: Option<String>,
+    fields_choice: FieldsChoice,
+}
+
+struct FieldsChoice {
+    sender: bool,
+    origin: bool,
+    origin_server_ts: bool,
+    etype: bool,
+    state_key: bool,
+    prev_events: bool,
+    depth: bool,
+    redacts: bool,
+    event_id: bool,
 }
 
 pub enum Msg {
@@ -76,6 +89,16 @@ pub enum UIEvent {
 
     Username(html::ChangeData),
     Password(html::ChangeData),
+
+    ToggleSender,
+    ToggleOrigin,
+    ToggleOriginServerTS,
+    ToggleType,
+    ToggleStateKey,
+    TogglePrevEvents,
+    ToggleDepth,
+    ToggleRedacts,
+    ToggleEventID,
 }
 
 pub enum UICommand {
@@ -118,6 +141,18 @@ impl Component for Model {
 
     fn create(_: Self::Properties, mut link: ComponentLink<Self>) -> Self {
         let new_session = Arc::new(RwLock::new(Session::empty()));
+
+        let default_fields_choice = FieldsChoice {
+            sender: false,
+            origin: false,
+            origin_server_ts: false,
+            etype: false,
+            state_key: false,
+            prev_events: false,
+            depth: false,
+            redacts: false,
+            event_id: true,
+        };
 
         Model {
             console: ConsoleService::new(),
@@ -219,6 +254,24 @@ impl Model {
                 if let html::ChangeData::Value(p) = p {
                     self.session.write().unwrap().password = p;
                 }
+            }
+            UIEvent::ToggleSender => {
+            }
+            UIEvent::ToggleOrigin => {
+            }
+            UIEvent::ToggleOriginServerTS => {
+            }
+            UIEvent::ToggleType => {
+            }
+            UIEvent::ToggleStateKey => {
+            }
+            UIEvent::TogglePrevEvents => {
+            }
+            UIEvent::ToggleDepth => {
+            }
+            UIEvent::ToggleRedacts => {
+            }
+            UIEvent::ToggleEventID => {
             }
         }
     }
@@ -533,6 +586,57 @@ impl Renderable<Model> for Model {
                     <button onclick=|_| Msg::BkCmd(BkCommand::LeaveRoom),> { "Leave room and disconnect" }</button>
                 </li>
             </ul>
+
+            <section class="fields-choice",>
+                <p>{ "Event fields to show in the DAG:" }</p>
+
+                <ul>
+                    <li>
+                        <input type="checkbox", id="sender", name="sender", checked=self.fields_choice.sender, onclick=|_| Msg::UI(UIEvent::ToggleSender),></input>
+                        <label for="sender",>{ "Sender" }</label>
+                    </li>
+
+                    <li>
+                        <input type="checkbox", id="origin", name="origin", checked=self.fields_choice.origin, onclick=|_| Msg::UI(UIEvent::ToggleOrigin),></input>
+                        <label for="origin",>{ "Origin" }</label>
+                    </li>
+
+                    <li>
+                        <input type="checkbox", id="origin-server-ts", name="origin-server-ts", checked=self.fields_choice.origin_server_ts, onclick=|_| Msg::UI(UIEvent::ToggleOriginServerTS),></input>
+                        <label for="origin-server-ts",>{ "Origin server time stamp" }</label>
+                    </li>
+
+                    <li>
+                        <input type="checkbox", id="type", name="type", checked=self.fields_choice.etype, onclick=|_| Msg::UI(UIEvent::ToggleType),></input>
+                        <label for="type",>{ "Type" }</label>
+                    </li>
+
+                    <li>
+                        <input type="checkbox", id="state-key", name="state-key", checked=self.fields_choice.state_key, onclick=|_| Msg::UI(UIEvent::ToggleStateKey),></input>
+                        <label for="state-key",>{ "State key" }</label>
+                    </li>
+
+                    <li>
+                        <input type="checkbox", id="prev-events", name="prev-events", checked=self.fields_choice.prev_events, onclick=|_| Msg::UI(UIEvent::TogglePrevEvents),></input>
+                        <label for="prev-events",>{ "Previous events" }</label>
+                    </li>
+
+                    <li>
+                        <input type="checkbox", id="depth", name="depth", checked=self.fields_choice.depth, onclick=|_| Msg::UI(UIEvent::ToggleDepth),></input>
+                        <label for="depth",>{ "Depth" }</label>
+                    </li>
+
+                    <li>
+                        <input type="checkbox", id="redacts", name="redacts", checked=self.fields_choice.redacts, onclick=|_| Msg::UI(UIEvent::ToggleRedacts),></input>
+                        <label for="redacts",>{ "Redacts" }</label>
+                    </li>
+
+                    <li>
+                        <input type="checkbox", id="event-id", name="event-id", checked=self.fields_choice.event_id, onclick=|_| Msg::UI(UIEvent::ToggleEventID),></input>
+                        <label for="event-id",>{ "Event ID" }</label>
+                    </li>
+                </ul>
+            </section>
 
             <section class="to-hide",>
                 <p>{ "The elements in this section should be hidden" }</p>
