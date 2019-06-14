@@ -14,18 +14,19 @@ pub struct Event {
     origin_server_ts: i64, // Timestamp in milliseconds on origin homeserver when this event was created
     #[serde(rename = "type")]
     etype: String, // Event type
-    state_key: Option<String>,
-    content: JsonValue,
+    state_key: Option<String>, // Indicate whether this event is a state event
+    content: JsonValue,    // The content of the event
     prev_events: Vec<JsonValue>, // Event IDs for the most recent events in the room that the homeserver was aware of when it made this event
     pub depth: i64,              // The maximum depth of the `prev_events`, plus one
-    auth_events: Vec<JsonValue>,
-    redacts: Option<String>,
-    unsigned: Option<JsonValue>,
-    pub event_id: String, // The event ID
-    hashes: JsonValue,
-    signatures: JsonValue,
+    auth_events: Vec<JsonValue>, // Event IDs and reference hashes for the authorization events that would allow this event to be in the room
+    redacts: Option<String>,     // For redaction events, the ID of the event being redacted
+    unsigned: Option<JsonValue>, // Additional data added by the origin server but not covered by the `signatures`
+    pub event_id: String,        // The event ID
+    hashes: JsonValue, // Content hashes of the PDU, following the algorithm specified in `Signing Events`
+    signatures: JsonValue, // Signatures for the PDU, following the algorithm specified in `Signing Events`
 }
 
+/// Defines the fields of the events which will be included in the labels of the DAG's nodes.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Field {
     Sender,
@@ -55,6 +56,9 @@ impl Event {
             .collect()
     }
 
+    /// Convert an event in a format usable by vis.js.
+    /// `server_name` must be the HS from which the DAG was retrieved for coloring the node.
+    /// `fields` is a set of events fields to include in the label.
     pub fn to_data_set_node(&self, server_name: &str, fields: &HashSet<Field>) -> DataSetNode {
         let (border_color, background_color) = if self.origin == server_name {
             ("#006633".to_string(), "#009900".to_string())

@@ -14,9 +14,9 @@ use super::event::{Event, Field};
 /// The internal representation of the events DAG of the room being observed as well as various
 /// informations and `HashMap`s which makes easier to locate the events.
 pub struct RoomEvents {
-    room_id: String,     // The ID of the room
-    server_name: String, // The name of the server this DAG was retrieved from
-    fields: HashSet<Field>,
+    room_id: String,        // The ID of the room
+    server_name: String,    // The name of the server this DAG was retrieved from
+    fields: HashSet<Field>, // Events fields which will be included in the labels on the nodes of the vis.js network
 
     dag: Graph<Event, (), Directed>,         // The DAG of the events
     events_map: HashMap<String, NodeIndex>, // Allows to quickly locate an event in the DAG with its ID
@@ -27,12 +27,14 @@ pub struct RoomEvents {
     min_depth: i64,                          // Maximal depth of the events in the DAG
 }
 
+/// The data set containing events which will be added to the vis.js network.
 #[derive(Debug, Serialize)]
 pub struct DataSet {
     nodes: Vec<DataSetNode>,
     edges: Vec<DataSetEdge>,
 }
 
+/// A node of the vis.js data set.
 #[derive(Debug, Serialize)]
 pub struct DataSetNode {
     pub id: String,
@@ -41,12 +43,14 @@ pub struct DataSetNode {
     pub color: NodeColor,
 }
 
+/// The colors of the data set's node.
 #[derive(Debug, Serialize)]
 pub struct NodeColor {
     pub border: String,
     pub background: String,
 }
 
+/// An edge of the vis.js data set.
 #[derive(Debug, Serialize)]
 pub struct DataSetEdge {
     from: String,
@@ -170,12 +174,14 @@ impl RoomEvents {
         }
     }
 
+    /// Get an `Event` from its ID.
     pub fn get_event(&self, id: &str) -> Option<&Event> {
         self.events_map
             .get(id)
             .map(|idx| self.dag.node_weight(*idx).unwrap())
     }
 
+    /// Creates a data set for creating a vis.js network.
     pub fn create_data_set(&mut self) -> DataSet {
         let server_name = self.server_name.clone();
         let fields = self.fields.clone();
@@ -210,6 +216,8 @@ impl RoomEvents {
         DataSet { nodes, edges }
     }
 
+    /// Adds to `data_set` every events in the DAG which are earlier than the events which IDs are
+    /// in `from`.
     pub fn add_earlier_events_to_data_set(&self, data_set: &mut DataSet, from: Vec<String>) {
         let from_indices: HashSet<NodeIndex> = from
             .iter()
@@ -234,6 +242,8 @@ impl RoomEvents {
             .for_each(|edge| data_set.edges.push(edge));
     }
 
+    /// Adds to `data_set` every events in the DAG which are newer than the events which IDs are
+    /// in `from`.
     pub fn add_new_events_to_data_set(&self, data_set: &mut DataSet, from: Vec<String>) {
         // TODO: Make a shadow copy instead of a real one
         let mut rev_dag = self.dag.clone();
@@ -268,6 +278,7 @@ impl RoomEvents {
             .for_each(|edge| data_set.edges.push(edge));
     }
 
+    // Change the events fields which will be in the labels on the nodes of the vis.js network.
     pub fn change_fields(&mut self, fields: &HashSet<Field>) {
         self.fields = fields.clone();
     }
