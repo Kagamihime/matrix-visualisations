@@ -509,10 +509,16 @@ impl Model {
 
         // Order the backend to make requests to the homeserver according to the command received
         match cmd {
-            BkCommand::Connect => {
-                self.connection_task =
-                    Some(self.cs_backend.connect(self.connection_callback.clone()))
-            }
+            BkCommand::Connect => match self.session.read().unwrap().access_token {
+                None => match self.connection_task {
+                    None => {
+                        self.connection_task =
+                            Some(self.cs_backend.connect(self.connection_callback.clone()))
+                    }
+                    Some(_) => self.console.log("Already connecting"),
+                },
+                Some(_) => self.console.log("You are already connected"),
+            },
             BkCommand::ListRooms => {
                 self.listing_rooms_task = Some(
                     self.cs_backend
@@ -533,28 +539,37 @@ impl Model {
                         .sync(self.sync_callback.clone(), next_batch_token),
                 )
             }
-            BkCommand::MoreMsg => {
-                self.more_msg_task = Some(
-                    self.cs_backend
-                        .get_prev_messages(self.more_msg_callback.clone()),
-                )
-            }
-            BkCommand::LeaveRoom => {
-                self.leaving_room_task = Some(
-                    self.cs_backend
-                        .leave_room(self.leaving_room_callback.clone()),
-                );
-            }
+            BkCommand::MoreMsg => match self.more_msg_task {
+                None => {
+                    self.more_msg_task = Some(
+                        self.cs_backend
+                            .get_prev_messages(self.more_msg_callback.clone()),
+                    )
+                }
+                Some(_) => self.console.log("Already fetching previous messages"),
+            },
+            BkCommand::LeaveRoom => match self.leaving_room_task {
+                None => {
+                    self.leaving_room_task = Some(
+                        self.cs_backend
+                            .leave_room(self.leaving_room_callback.clone()),
+                    )
+                }
+                Some(_) => self.console.log("Already leaving the room"),
+            },
             BkCommand::Disconnect => match self.session.read().unwrap().access_token {
                 None => {
                     self.console.log("You were not connected");
                 }
-                Some(_) => {
-                    self.disconnection_task = Some(
-                        self.cs_backend
-                            .disconnect(self.disconnection_callback.clone()),
-                    );
-                }
+                Some(_) => match self.disconnection_task {
+                    None => {
+                        self.disconnection_task = Some(
+                            self.cs_backend
+                                .disconnect(self.disconnection_callback.clone()),
+                        )
+                    }
+                    Some(_) => self.console.log("Already disconnecting"),
+                },
             },
         }
     }
