@@ -5,12 +5,12 @@
 .view {
     padding: 6px;
     display: grid;
-    grid-template-columns: 600px 700px;
+    grid-template-columns: 800px 700px;
     grid-gap: 12px;
 }
 
 #dag-vis {
-    width: 600px;
+    width: 800px;
     height: 900px;
     border: 1px solid lightgray;
 
@@ -21,7 +21,7 @@
     width: 700px;
     height: 900px;
     padding: 6px;
-    background-color: lightgray;
+    background-color: lightblue;
     overflow: auto;
 
     grid-column: 2;
