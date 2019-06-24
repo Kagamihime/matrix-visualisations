@@ -11,6 +11,7 @@ extern crate yew;
 
 mod cs_backend;
 mod model;
+mod pg_backend;
 mod visjs;
 
 use std::collections::HashSet;
@@ -27,9 +28,10 @@ use yew::{html, Callback, Component, ComponentLink, Html, Renderable, ShouldRend
 use cs_backend::backend::{
     CSBackend, ConnectionResponse, JoinedRooms, MessagesResponse, SyncResponse,
 };
-use cs_backend::session::Session;
+use cs_backend::session::Session as CSSession;
 use model::dag::RoomEvents;
 use model::event::Field;
+use pg_backend::session::Session as PgSession;
 use visjs::VisJsService;
 
 pub struct Model {
@@ -58,11 +60,19 @@ pub struct Model {
     disconnection_callback: Callback<Result<(), Error>>,
     disconnection_task: Option<FetchTask>,
 
+    bk_type: BackendChoice,
     cs_backend: CSBackend,
-    session: Arc<RwLock<Session>>,
+    cs_session: Arc<RwLock<CSSession>>,
+    pg_session: Arc<RwLock<PgSession>>,
     events_dag: Option<Arc<RwLock<RoomEvents>>>,
     event_body: Option<String>,
     fields_choice: FieldsChoice,
+}
+
+#[derive(Eq, PartialEq)]
+enum BackendChoice {
+    CS,
+    Postgres,
 }
 
 struct FieldsChoice {
@@ -88,6 +98,8 @@ pub enum Msg {
 
 /// These messages notifies the application of changes in the data modifiable via the UI.
 pub enum UIEvent {
+    ChooseCSBackend,
+    ChoosePostgresBackend,
     ServerName(html::ChangeData),
     RoomId(html::ChangeData),
 
@@ -144,7 +156,8 @@ impl Component for Model {
     type Properties = ();
 
     fn create(_: Self::Properties, mut link: ComponentLink<Self>) -> Self {
-        let new_session = Arc::new(RwLock::new(Session::empty()));
+        let new_cs_session = Arc::new(RwLock::new(CSSession::empty()));
+        let new_pg_session = Arc::new(RwLock::new(PgSession::empty()));
 
         let default_fields_choice = FieldsChoice {
             sender: false,
@@ -217,8 +230,10 @@ impl Component for Model {
 
             link,
 
-            cs_backend: CSBackend::with_session(new_session.clone()),
-            session: new_session,
+            bk_type: BackendChoice::CS,
+            cs_backend: CSBackend::with_session(new_cs_session.clone()),
+            cs_session: new_cs_session,
+            pg_session: new_pg_session,
             events_dag: None,
             event_body: None,
             fields_choice: default_fields_choice,
@@ -242,24 +257,26 @@ impl Model {
         // Change the informations of the session whenever their corresponding entries in the UI
         // are changed
         match event {
+            UIEvent::ChooseCSBackend => self.bk_type = BackendChoice::CS,
+            UIEvent::ChoosePostgresBackend => self.bk_type = BackendChoice::Postgres,
             UIEvent::ServerName(sn) => {
                 if let html::ChangeData::Value(sn) = sn {
-                    self.session.write().unwrap().server_name = sn;
+                    self.cs_session.write().unwrap().server_name = sn;
                 }
             }
             UIEvent::RoomId(ri) => {
                 if let html::ChangeData::Value(ri) = ri {
-                    self.session.write().unwrap().room_id = ri;
+                    self.cs_session.write().unwrap().room_id = ri;
                 }
             }
             UIEvent::Username(u) => {
                 if let html::ChangeData::Value(u) = u {
-                    self.session.write().unwrap().username = u;
+                    self.cs_session.write().unwrap().username = u;
                 }
             }
             UIEvent::Password(p) => {
                 if let html::ChangeData::Value(p) = p {
-                    self.session.write().unwrap().password = p;
+                    self.cs_session.write().unwrap().password = p;
                 }
             }
             UIEvent::ToggleSender => {
@@ -509,7 +526,7 @@ impl Model {
 
         // Order the backend to make requests to the homeserver according to the command received
         match cmd {
-            BkCommand::Connect => match self.session.read().unwrap().access_token {
+            BkCommand::Connect => match self.cs_session.read().unwrap().access_token {
                 None => match self.connection_task {
                     None => {
                         self.connection_task =
@@ -532,7 +549,7 @@ impl Model {
                 )
             }
             BkCommand::Sync => {
-                let next_batch_token = self.session.read().unwrap().next_batch_token.clone();
+                let next_batch_token = self.cs_session.read().unwrap().next_batch_token.clone();
 
                 self.sync_task = Some(
                     self.cs_backend
@@ -557,7 +574,7 @@ impl Model {
                 }
                 Some(_) => self.console.log("Already leaving the room"),
             },
-            BkCommand::Disconnect => match self.session.read().unwrap().access_token {
+            BkCommand::Disconnect => match self.cs_session.read().unwrap().access_token {
                 None => {
                     self.console.log("You were not connected");
                 }
@@ -579,7 +596,7 @@ impl Model {
             BkResponse::Connected(res) => {
                 self.connection_task = None;
 
-                let mut session = self.session.write().unwrap();
+                let mut session = self.cs_session.write().unwrap();
 
                 // Save the informations given by the homeserver when connecting to it. The access
                 // token will be used for authenticating subsequent requests.
@@ -605,7 +622,7 @@ impl Model {
 
                 if res
                     .joined_rooms
-                    .contains(&self.session.read().unwrap().room_id)
+                    .contains(&self.cs_session.read().unwrap().room_id)
                 {
                     // If the user is already in the room to observe, make the initial sync
                     self.link
@@ -631,7 +648,7 @@ impl Model {
             BkResponse::Synced(res) => {
                 self.sync_task = None;
 
-                let mut session = self.session.write().unwrap();
+                let mut session = self.cs_session.write().unwrap();
                 let next_batch_token = res.next_batch.clone(); // Save the next batch token to get new events later
 
                 match session.next_batch_token {
@@ -686,7 +703,7 @@ impl Model {
                 self.more_msg_task = None;
 
                 // Save the prev batch token for the next `/messages` request
-                self.session.write().unwrap().prev_batch_token = Some(res.end);
+                self.cs_session.write().unwrap().prev_batch_token = Some(res.end);
 
                 match self.events_dag.clone() {
                     // Add earlier event to the DAG and display them
@@ -714,7 +731,7 @@ impl Model {
                 self.sync_task = None; // If a `/sync` request was in progress, cancel it
                 self.disconnection_task = None;
 
-                let mut session = self.session.write().unwrap();
+                let mut session = self.cs_session.write().unwrap();
 
                 // Erase the current session data so they won't be erroneously used if the user
                 // logs in again
@@ -784,6 +801,13 @@ impl Renderable<Model> for Model {
     fn view(&self) -> Html<Self> {
         html! {
             <ul>
+                <li>
+                    <input type="radio", id="cs-bk", name="bk-type", value="cs-bk", checked=(self.bk_type == BackendChoice::CS), onclick=|_| Msg::UI(UIEvent::ChooseCSBackend),/>
+                    <label for="cs-bk",>{ "CS backend" }</label>
+                    <input type="radio", id="pg-bk", name="bk-type", value="pg-bk", checked=(self.bk_type == BackendChoice::Postgres), onclick=|_| Msg::UI(UIEvent::ChoosePostgresBackend),/>
+                    <label for="pg-bk",>{ "Synapse PostgreSQL backend" }</label>
+                </li>
+
                 <li>{ "Server name: " }<input type="text", onchange=|e| Msg::UI(UIEvent::ServerName(e)),/></li>
 
                 <li>{ "Room ID: " }<input type="text", onchange=|e| Msg::UI(UIEvent::RoomId(e)),/></li>
@@ -804,47 +828,47 @@ impl Renderable<Model> for Model {
 
                 <ul>
                     <li>
-                        <input type="checkbox", id="sender", name="sender", checked=self.fields_choice.sender, onclick=|_| Msg::UI(UIEvent::ToggleSender),></input>
+                        <input type="checkbox", id="sender", name="sender", checked=self.fields_choice.sender, onclick=|_| Msg::UI(UIEvent::ToggleSender),/>
                         <label for="sender",>{ "Sender" }</label>
                     </li>
 
                     <li>
-                        <input type="checkbox", id="origin", name="origin", checked=self.fields_choice.origin, onclick=|_| Msg::UI(UIEvent::ToggleOrigin),></input>
+                        <input type="checkbox", id="origin", name="origin", checked=self.fields_choice.origin, onclick=|_| Msg::UI(UIEvent::ToggleOrigin),/>
                         <label for="origin",>{ "Origin" }</label>
                     </li>
 
                     <li>
-                        <input type="checkbox", id="origin-server-ts", name="origin-server-ts", checked=self.fields_choice.origin_server_ts, onclick=|_| Msg::UI(UIEvent::ToggleOriginServerTS),></input>
+                        <input type="checkbox", id="origin-server-ts", name="origin-server-ts", checked=self.fields_choice.origin_server_ts, onclick=|_| Msg::UI(UIEvent::ToggleOriginServerTS),/>
                         <label for="origin-server-ts",>{ "Origin server time stamp" }</label>
                     </li>
 
                     <li>
-                        <input type="checkbox", id="type", name="type", checked=self.fields_choice.etype, onclick=|_| Msg::UI(UIEvent::ToggleType),></input>
+                        <input type="checkbox", id="type", name="type", checked=self.fields_choice.etype, onclick=|_| Msg::UI(UIEvent::ToggleType),/>
                         <label for="type",>{ "Type" }</label>
                     </li>
 
                     <li>
-                        <input type="checkbox", id="state-key", name="state-key", checked=self.fields_choice.state_key, onclick=|_| Msg::UI(UIEvent::ToggleStateKey),></input>
+                        <input type="checkbox", id="state-key", name="state-key", checked=self.fields_choice.state_key, onclick=|_| Msg::UI(UIEvent::ToggleStateKey),/>
                         <label for="state-key",>{ "State key" }</label>
                     </li>
 
                     <li>
-                        <input type="checkbox", id="prev-events", name="prev-events", checked=self.fields_choice.prev_events, onclick=|_| Msg::UI(UIEvent::TogglePrevEvents),></input>
+                        <input type="checkbox", id="prev-events", name="prev-events", checked=self.fields_choice.prev_events, onclick=|_| Msg::UI(UIEvent::TogglePrevEvents),/>
                         <label for="prev-events",>{ "Previous events" }</label>
                     </li>
 
                     <li>
-                        <input type="checkbox", id="depth", name="depth", checked=self.fields_choice.depth, onclick=|_| Msg::UI(UIEvent::ToggleDepth),></input>
+                        <input type="checkbox", id="depth", name="depth", checked=self.fields_choice.depth, onclick=|_| Msg::UI(UIEvent::ToggleDepth),/>
                         <label for="depth",>{ "Depth" }</label>
                     </li>
 
                     <li>
-                        <input type="checkbox", id="redacts", name="redacts", checked=self.fields_choice.redacts, onclick=|_| Msg::UI(UIEvent::ToggleRedacts),></input>
+                        <input type="checkbox", id="redacts", name="redacts", checked=self.fields_choice.redacts, onclick=|_| Msg::UI(UIEvent::ToggleRedacts),/>
                         <label for="redacts",>{ "Redacts" }</label>
                     </li>
 
                     <li>
-                        <input type="checkbox", id="event-id", name="event-id", checked=self.fields_choice.event_id, onclick=|_| Msg::UI(UIEvent::ToggleEventID),></input>
+                        <input type="checkbox", id="event-id", name="event-id", checked=self.fields_choice.event_id, onclick=|_| Msg::UI(UIEvent::ToggleEventID),/>
                         <label for="event-id",>{ "Event ID" }</label>
                     </li>
                 </ul>
@@ -853,7 +877,7 @@ impl Renderable<Model> for Model {
             <section class="to-hide",>
                 <p>{ "The elements in this section should be hidden" }</p>
                 <button id="more-ev-target", onclick=|_| Msg::BkCmd(BkCommand::MoreMsg),>{ "More events" }</button>
-                <input type="text", id="selected-event",></input>
+                <input type="text", id="selected-event",/>
                 <button id="display-body-target", onclick=|_| Msg::UICmd(UICommand::DisplayEventBody),>{ "Display body" }</button>
             </section>
 
