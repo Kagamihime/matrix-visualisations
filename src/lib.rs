@@ -22,7 +22,8 @@ use stdweb::unstable::TryInto;
 use stdweb::web;
 use stdweb::web::IParentNode;
 use yew::services::fetch::FetchTask;
-use yew::services::ConsoleService;
+use yew::services::timeout::TimeoutTask;
+use yew::services::{ConsoleService, TimeoutService};
 use yew::{html, Callback, Component, ComponentLink, Html, Renderable, ShouldRender};
 
 use cs_backend::backend::{
@@ -31,11 +32,13 @@ use cs_backend::backend::{
 use cs_backend::session::Session as CSSession;
 use model::dag::RoomEvents;
 use model::event::Field;
+use pg_backend::backend::{EventsResponse, PostgresBackend};
 use pg_backend::session::Session as PgSession;
 use visjs::VisJsService;
 
 pub struct Model {
     console: ConsoleService,
+    timeout: TimeoutService,
     vis: VisJsService,
     link: ComponentLink<Self>,
 
@@ -60,8 +63,19 @@ pub struct Model {
     disconnection_callback: Callback<Result<(), Error>>,
     disconnection_task: Option<FetchTask>,
 
+    deepest_callback: Callback<Result<EventsResponse, Error>>,
+    deepest_task: Option<FetchTask>,
+
+    ancestors_callback: Callback<Result<EventsResponse, Error>>,
+    ancestors_task: Option<FetchTask>,
+
+    descendants_callback: Callback<Result<EventsResponse, Error>>,
+    descendants_task: Option<FetchTask>,
+    descendants_timeout_task: Option<TimeoutTask>,
+
     bk_type: BackendChoice,
     cs_backend: CSBackend,
+    pg_backend: PostgresBackend,
     cs_session: Arc<RwLock<CSSession>>,
     pg_session: Arc<RwLock<PgSession>>,
     events_dag: Option<Arc<RwLock<RoomEvents>>>,
@@ -149,6 +163,14 @@ pub enum BkResponse {
     MoreMsgFailed,
     LeavingRoomFailed,
     DisconnectionFailed,
+
+    DeepestEvents(EventsResponse),
+    Ancestors(EventsResponse),
+    Descendants(EventsResponse),
+
+    DeepestRqFailed,
+    AncestorsRqFailed,
+    DescendantsRqFailed,
 }
 
 impl Component for Model {
@@ -175,6 +197,7 @@ impl Component for Model {
 
         Model {
             console: ConsoleService::new(),
+            timeout: TimeoutService::new(),
             vis: VisJsService::new(),
 
             connection_callback: link.send_back(|response: Result<ConnectionResponse, Error>| {
@@ -228,10 +251,36 @@ impl Component for Model {
             }),
             disconnection_task: None,
 
+            deepest_callback: link.send_back(|response: Result<EventsResponse, Error>| {
+                match response {
+                    Ok(res) => Msg::BkRes(BkResponse::DeepestEvents(res)),
+                    Err(_) => Msg::BkRes(BkResponse::DeepestRqFailed),
+                }
+            }),
+            deepest_task: None,
+
+            ancestors_callback: link.send_back(|response: Result<EventsResponse, Error>| {
+                match response {
+                    Ok(res) => Msg::BkRes(BkResponse::Ancestors(res)),
+                    Err(_) => Msg::BkRes(BkResponse::AncestorsRqFailed),
+                }
+            }),
+            ancestors_task: None,
+
+            descendants_callback: link.send_back(|response: Result<EventsResponse, Error>| {
+                match response {
+                    Ok(res) => Msg::BkRes(BkResponse::Descendants(res)),
+                    Err(_) => Msg::BkRes(BkResponse::DescendantsRqFailed),
+                }
+            }),
+            descendants_task: None,
+            descendants_timeout_task: None,
+
             link,
 
             bk_type: BackendChoice::CS,
             cs_backend: CSBackend::with_session(new_cs_session.clone()),
+            pg_backend: PostgresBackend::with_session(new_pg_session.clone()),
             cs_session: new_cs_session,
             pg_session: new_pg_session,
             events_dag: None,
@@ -261,12 +310,20 @@ impl Model {
             UIEvent::ChoosePostgresBackend => self.bk_type = BackendChoice::Postgres,
             UIEvent::ServerName(sn) => {
                 if let html::ChangeData::Value(sn) = sn {
-                    self.cs_session.write().unwrap().server_name = sn;
+                    match self.bk_type {
+                        BackendChoice::CS => self.cs_session.write().unwrap().server_name = sn,
+                        BackendChoice::Postgres => {
+                            self.pg_session.write().unwrap().server_name = sn
+                        }
+                    }
                 }
             }
             UIEvent::RoomId(ri) => {
                 if let html::ChangeData::Value(ri) = ri {
-                    self.cs_session.write().unwrap().room_id = ri;
+                    match self.bk_type {
+                        BackendChoice::CS => self.cs_session.write().unwrap().room_id = ri,
+                        BackendChoice::Postgres => self.pg_session.write().unwrap().room_id = ri,
+                    }
                 }
             }
             UIEvent::Username(u) => {
@@ -526,15 +583,27 @@ impl Model {
 
         // Order the backend to make requests to the homeserver according to the command received
         match cmd {
-            BkCommand::Connect => match self.cs_session.read().unwrap().access_token {
-                None => match self.connection_task {
-                    None => {
-                        self.connection_task =
-                            Some(self.cs_backend.connect(self.connection_callback.clone()))
-                    }
-                    Some(_) => self.console.log("Already connecting"),
+            BkCommand::Connect => match self.bk_type {
+                BackendChoice::CS => match self.cs_session.read().unwrap().access_token {
+                    None => match self.connection_task {
+                        None => {
+                            self.connection_task =
+                                Some(self.cs_backend.connect(self.connection_callback.clone()))
+                        }
+                        Some(_) => self.console.log("Already connecting"),
+                    },
+                    Some(_) => self.console.log("You are already connected"),
                 },
-                Some(_) => self.console.log("You are already connected"),
+                BackendChoice::Postgres => match self.events_dag {
+                    None => match self.deepest_task {
+                        None => {
+                            self.deepest_task =
+                                Some(self.pg_backend.deepest(self.deepest_callback.clone()))
+                        }
+                        Some(_) => self.console.log("Already fetching deepest events"),
+                    },
+                    Some(_) => self.console.log("Deepest events already fetched"),
+                },
             },
             BkCommand::ListRooms => {
                 self.listing_rooms_task = Some(
@@ -548,22 +617,50 @@ impl Model {
                         .join_room(self.joining_room_callback.clone()),
                 )
             }
-            BkCommand::Sync => {
-                let next_batch_token = self.cs_session.read().unwrap().next_batch_token.clone();
+            BkCommand::Sync => match self.bk_type {
+                BackendChoice::CS => {
+                    let next_batch_token = self.cs_session.read().unwrap().next_batch_token.clone();
 
-                self.sync_task = Some(
-                    self.cs_backend
-                        .sync(self.sync_callback.clone(), next_batch_token),
-                )
-            }
-            BkCommand::MoreMsg => match self.more_msg_task {
-                None => {
-                    self.more_msg_task = Some(
+                    self.sync_task = Some(
                         self.cs_backend
-                            .get_prev_messages(self.more_msg_callback.clone()),
+                            .sync(self.sync_callback.clone(), next_batch_token),
                     )
                 }
-                Some(_) => self.console.log("Already fetching previous messages"),
+                BackendChoice::Postgres => {
+                    if let Some(dag) = &self.events_dag {
+                        let from = &dag.read().unwrap().latest_events;
+
+                        self.descendants_task = Some(
+                            self.pg_backend
+                                .descendants(self.descendants_callback.clone(), from),
+                        );
+                    }
+                }
+            },
+            BkCommand::MoreMsg => match self.bk_type {
+                BackendChoice::CS => match self.more_msg_task {
+                    None => {
+                        self.more_msg_task = Some(
+                            self.cs_backend
+                                .get_prev_messages(self.more_msg_callback.clone()),
+                        );
+                    }
+                    Some(_) => self.console.log("Already fetching previous messages"),
+                },
+                BackendChoice::Postgres => match self.ancestors_task {
+                    None => match &self.events_dag {
+                        Some(dag) => {
+                            let from = &dag.read().unwrap().earliest_events;
+
+                            self.ancestors_task = Some(
+                                self.pg_backend
+                                    .ancestors(self.ancestors_callback.clone(), from),
+                            );
+                        }
+                        None => self.console.log("There was no DAG"),
+                    },
+                    Some(_) => self.console.log("Already fetching ancestors"),
+                },
             },
             BkCommand::LeaveRoom => match self.leaving_room_task {
                 None => {
@@ -665,7 +762,7 @@ impl Model {
                             &self.fields_choice.fields,
                             res,
                         ) {
-                            self.events_dag = Some(Arc::new(RwLock::new(dag)));;
+                            self.events_dag = Some(Arc::new(RwLock::new(dag)));
                         }
 
                         match self.events_dag.clone() {
@@ -685,8 +782,12 @@ impl Model {
                     Some(_) => match self.events_dag.clone() {
                         // Add new events to the DAG
                         Some(dag) => {
-                            dag.write().unwrap().add_new_events(res);
-                            self.vis.update_dag(dag);
+                            if let Some(room) = res.rooms.join.get(&session.room_id) {
+                                dag.write()
+                                    .unwrap()
+                                    .add_events(room.timeline.events.clone());
+                                self.vis.update_dag(dag);
+                            }
                         }
                         None => self.console.log("There is no DAG"),
                     },
@@ -708,7 +809,7 @@ impl Model {
                 match self.events_dag.clone() {
                     // Add earlier event to the DAG and display them
                     Some(dag) => {
-                        dag.write().unwrap().add_prev_events(res.chunk);
+                        dag.write().unwrap().add_events(res.chunk);
 
                         self.vis.update_dag(dag);
                     }
@@ -743,6 +844,7 @@ impl Model {
 
                 self.events_dag = None;
             }
+
             BkResponse::ConnectionFailed => {
                 self.console.log("Connection failed");
 
@@ -777,6 +879,87 @@ impl Model {
                 self.console.log("Could not disconnect");
 
                 self.disconnection_task = None;
+            }
+
+            BkResponse::DeepestEvents(res) => {
+                self.deepest_task = None;
+
+                let session = self.pg_session.read().unwrap();
+
+                self.events_dag = Some(Arc::new(RwLock::new(
+                    model::dag::RoomEvents::from_deepest_events(
+                        &session.room_id,
+                        &session.server_name,
+                        &self.fields_choice.fields,
+                        res,
+                    ),
+                )));
+
+                match self.events_dag.clone() {
+                    Some(dag) => {
+                        self.vis.display_dag(
+                            dag,
+                            "#dag-vis",
+                            "#more-ev-target",
+                            "#selected-event",
+                            "#display-body-target",
+                        );
+                    }
+                    None => self.console.log("Failed to build the DAG"),
+                }
+
+                self.descendants_timeout_task = Some(self.timeout.spawn(
+                    std::time::Duration::new(5, 0),
+                    self.link.send_back(|_: ()| Msg::BkCmd(BkCommand::Sync)),
+                ));
+            }
+            BkResponse::Ancestors(res) => {
+                self.ancestors_task = None;
+
+                match self.events_dag.clone() {
+                    // Add ancestors to the DAG and display them
+                    Some(dag) => {
+                        dag.write().unwrap().add_events(res.events);
+
+                        self.vis.update_dag(dag);
+                    }
+                    None => self.console.log("There was no DAG"),
+                }
+            }
+            BkResponse::Descendants(res) => {
+                self.descendants_task = None;
+
+                match self.events_dag.clone() {
+                    Some(dag) => {
+                        dag.write().unwrap().add_events(res.events);
+
+                        self.vis.update_dag(dag);
+
+                        self.descendants_timeout_task = Some(self.timeout.spawn(
+                            std::time::Duration::new(5, 0),
+                            self.link.send_back(|_: ()| Msg::BkCmd(BkCommand::Sync)),
+                        ));
+                    }
+                    None => self.console.log("There was no DAG"),
+                }
+            }
+
+            BkResponse::DeepestRqFailed => {
+                self.console
+                    .log("Could not retrieve the room's deepest events");
+
+                self.deepest_task = None;
+            }
+            BkResponse::AncestorsRqFailed => {
+                self.console.log("Could not retrieve the events' ancestors");
+
+                self.ancestors_task = None;
+            }
+            BkResponse::DescendantsRqFailed => {
+                self.console
+                    .log("Could not retrieve the events' descendants");
+
+                self.descendants_task = None;
             }
         }
     }

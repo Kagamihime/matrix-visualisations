@@ -8,6 +8,7 @@ use serde_derive::Serialize;
 use serde_json::Value as JsonValue;
 
 use crate::cs_backend::backend::SyncResponse;
+use crate::pg_backend::backend::EventsResponse;
 
 use super::event::{Event, Field};
 
@@ -92,18 +93,36 @@ impl RoomEvents {
         }
     }
 
-    /// Adds new events to the DAG from a `SyncResponse`.
-    pub fn add_new_events(&mut self, res: SyncResponse) {
-        if let Some(room) = res.rooms.join.get(&self.room_id) {
-            let events = parse_events(&room.timeline.events);
+    pub fn from_deepest_events(
+        room_id: &str,
+        server_name: &str,
+        fields: &HashSet<Field>,
+        res: EventsResponse,
+    ) -> RoomEvents {
+        let events = parse_events(&res.events);
 
-            self.add_event_nodes(events);
-            self.update_event_edges();
-        }
+        let mut dag = RoomEvents {
+            room_id: room_id.to_string(),
+            server_name: server_name.to_string(),
+            fields: fields.clone(),
+
+            dag: Graph::new(),
+            events_map: HashMap::with_capacity(events.len()),
+            depth_map: HashMap::with_capacity(events.len()),
+            latest_events: Vec::new(),
+            earliest_events: Vec::new(),
+            max_depth: -1,
+            min_depth: -1,
+        };
+
+        dag.add_event_nodes(events);
+        dag.update_event_edges();
+
+        dag
     }
 
-    /// Adds earlier `events` to the DAG.
-    pub fn add_prev_events(&mut self, events: Vec<JsonValue>) {
+    /// Adds `events` to the DAG.
+    pub fn add_events(&mut self, events: Vec<JsonValue>) {
         let events = parse_events(&events);
 
         self.add_event_nodes(events);
