@@ -2,6 +2,7 @@
 pub struct Session {
     pub server_name: String,
     pub room_id: String,
+    pub connected: bool,
 }
 
 impl Session {
@@ -9,6 +10,7 @@ impl Session {
         Session {
             server_name: String::new(),
             room_id: String::new(),
+            connected: false,
         }
     }
 }

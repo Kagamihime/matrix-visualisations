@@ -671,19 +671,33 @@ impl Model {
                 }
                 Some(_) => self.console.log("Already leaving the room"),
             },
-            BkCommand::Disconnect => match self.cs_session.read().unwrap().access_token {
-                None => {
-                    self.console.log("You were not connected");
-                }
-                Some(_) => match self.disconnection_task {
+            BkCommand::Disconnect => match self.bk_type {
+                BackendChoice::CS => match self.cs_session.read().unwrap().access_token {
                     None => {
-                        self.disconnection_task = Some(
-                            self.cs_backend
-                                .disconnect(self.disconnection_callback.clone()),
-                        )
+                        self.console.log("You were not connected");
                     }
-                    Some(_) => self.console.log("Already disconnecting"),
+                    Some(_) => match self.disconnection_task {
+                        None => {
+                            self.disconnection_task = Some(
+                                self.cs_backend
+                                    .disconnect(self.disconnection_callback.clone()),
+                            )
+                        }
+                        Some(_) => self.console.log("Already disconnecting"),
+                    },
                 },
+                BackendChoice::Postgres => {
+                    let mut session = self.pg_session.write().unwrap();
+
+                    if session.connected {
+                        self.console.log("Stopping the reception of new events");
+
+                        session.connected = false;
+                        self.descendants_timeout_task = None;
+                    } else {
+                        self.console.log("You were not connected");
+                    }
+                }
             },
         }
     }
@@ -884,7 +898,8 @@ impl Model {
             BkResponse::DeepestEvents(res) => {
                 self.deepest_task = None;
 
-                let session = self.pg_session.read().unwrap();
+                let mut session = self.pg_session.write().unwrap();
+                session.connected = true;
 
                 self.events_dag = Some(Arc::new(RwLock::new(
                     model::dag::RoomEvents::from_deepest_events(
@@ -935,10 +950,12 @@ impl Model {
 
                         self.vis.update_dag(dag);
 
-                        self.descendants_timeout_task = Some(self.timeout.spawn(
-                            std::time::Duration::new(5, 0),
-                            self.link.send_back(|_: ()| Msg::BkCmd(BkCommand::Sync)),
-                        ));
+                        if self.pg_session.read().unwrap().connected {
+                            self.descendants_timeout_task = Some(self.timeout.spawn(
+                                std::time::Duration::new(5, 0),
+                                self.link.send_back(|_: ()| Msg::BkCmd(BkCommand::Sync)),
+                            ));
+                        }
                     }
                     None => self.console.log("There was no DAG"),
                 }
