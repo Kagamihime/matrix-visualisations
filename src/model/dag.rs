@@ -22,10 +22,17 @@ pub struct RoomEvents {
     dag: Graph<Event, (), Directed>,         // The DAG of the events
     events_map: HashMap<String, NodeIndex>, // Allows to quickly locate an event in the DAG with its ID
     depth_map: HashMap<i64, Vec<NodeIndex>>, // Allows to quickly locate events at a given depth in the DAG
-    pub latest_events: Vec<String>,          // The ID of the latest event in the DAG
-    pub earliest_events: Vec<String>,        // The ID of the earliest event in the DAG
-    max_depth: i64,                          // Minimal depth of the events in the DAG
-    min_depth: i64,                          // Maximal depth of the events in the DAG
+    pub latest_events: Vec<String>,          // The ID of the latest events in the DAG
+    pub earliest_events: Vec<String>,        // The ID of the earliest events in the DAG
+    pub orphan_events: Vec<OrphanInfo>, // The ID and depth of events with missing ancestors in the DAG
+    max_depth: i64,                     // Minimal depth of the events in the DAG
+    min_depth: i64,                     // Maximal depth of the events in the DAG
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct OrphanInfo {
+    id: String,
+    depth: i64,
 }
 
 /// The data set containing events which will be added to the vis.js network.
@@ -80,6 +87,7 @@ impl RoomEvents {
                     depth_map: HashMap::with_capacity(timeline.len()),
                     latest_events: Vec::new(),
                     earliest_events: Vec::new(),
+                    orphan_events: Vec::new(),
                     max_depth: -1,
                     min_depth: -1,
                 };
@@ -111,6 +119,7 @@ impl RoomEvents {
             depth_map: HashMap::with_capacity(events.len()),
             latest_events: Vec::new(),
             earliest_events: Vec::new(),
+            orphan_events: Vec::new(),
             max_depth: -1,
             min_depth: -1,
         };
@@ -176,6 +185,7 @@ impl RoomEvents {
 
         self.latest_events.clear();
         self.earliest_events.clear();
+        self.orphan_events.clear();
 
         // Update the earliest and latest events of the DAG
         for idx in self.dag.node_indices() {
@@ -189,6 +199,22 @@ impl RoomEvents {
                 let id = self.dag.node_weight(idx).unwrap().event_id.clone();
 
                 self.latest_events.push(id);
+            }
+
+            if self.dag.edges_directed(idx, Direction::Outgoing).count()
+                < self
+                    .dag
+                    .node_weight(idx)
+                    .unwrap()
+                    .get_prev_events()
+                    .iter()
+                    .count()
+            {
+                let id = self.dag.node_weight(idx).unwrap().event_id.clone();
+                let depth = self.dag.node_weight(idx).unwrap().depth;
+                let info = OrphanInfo { id, depth };
+
+                self.orphan_events.push(info);
             }
         }
     }

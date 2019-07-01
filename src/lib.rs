@@ -73,7 +73,7 @@ pub struct Model {
     descendants_task: Option<FetchTask>,
     descendants_timeout_task: Option<TimeoutTask>,
 
-    bk_type: BackendChoice,
+    bk_type: Arc<RwLock<BackendChoice>>,
     cs_backend: CSBackend,
     pg_backend: PostgresBackend,
     cs_session: Arc<RwLock<CSSession>>,
@@ -83,8 +83,8 @@ pub struct Model {
     fields_choice: FieldsChoice,
 }
 
-#[derive(Eq, PartialEq)]
-enum BackendChoice {
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub enum BackendChoice {
     CS,
     Postgres,
 }
@@ -180,6 +180,7 @@ impl Component for Model {
     fn create(_: Self::Properties, mut link: ComponentLink<Self>) -> Self {
         let new_cs_session = Arc::new(RwLock::new(CSSession::empty()));
         let new_pg_session = Arc::new(RwLock::new(PgSession::empty()));
+        let bk_type = Arc::new(RwLock::new(BackendChoice::CS));
 
         let default_fields_choice = FieldsChoice {
             sender: false,
@@ -198,7 +199,7 @@ impl Component for Model {
         Model {
             console: ConsoleService::new(),
             timeout: TimeoutService::new(),
-            vis: VisJsService::new(),
+            vis: VisJsService::new(bk_type.clone()),
 
             connection_callback: link.send_back(|response: Result<ConnectionResponse, Error>| {
                 match response {
@@ -278,7 +279,7 @@ impl Component for Model {
 
             link,
 
-            bk_type: BackendChoice::CS,
+            bk_type: bk_type,
             cs_backend: CSBackend::with_session(new_cs_session.clone()),
             pg_backend: PostgresBackend::with_session(new_pg_session.clone()),
             cs_session: new_cs_session,
@@ -307,7 +308,7 @@ impl Model {
         // are changed
         match event {
             UIEvent::ChooseCSBackend => {
-                self.bk_type = BackendChoice::CS;
+                *self.bk_type.write().unwrap() = BackendChoice::CS;
 
                 let mut cs_session = self.cs_session.write().unwrap();
                 let pg_session = self.pg_session.read().unwrap();
@@ -316,7 +317,7 @@ impl Model {
                 cs_session.room_id = pg_session.room_id.clone();
             }
             UIEvent::ChoosePostgresBackend => {
-                self.bk_type = BackendChoice::Postgres;
+                *self.bk_type.write().unwrap() = BackendChoice::Postgres;
 
                 let mut pg_session = self.pg_session.write().unwrap();
                 let cs_session = self.cs_session.read().unwrap();
@@ -326,7 +327,7 @@ impl Model {
             }
             UIEvent::ServerName(sn) => {
                 if let html::ChangeData::Value(sn) = sn {
-                    match self.bk_type {
+                    match *self.bk_type.read().unwrap() {
                         BackendChoice::CS => self.cs_session.write().unwrap().server_name = sn,
                         BackendChoice::Postgres => {
                             self.pg_session.write().unwrap().server_name = sn
@@ -336,7 +337,7 @@ impl Model {
             }
             UIEvent::RoomId(ri) => {
                 if let html::ChangeData::Value(ri) = ri {
-                    match self.bk_type {
+                    match *self.bk_type.read().unwrap() {
                         BackendChoice::CS => self.cs_session.write().unwrap().room_id = ri,
                         BackendChoice::Postgres => self.pg_session.write().unwrap().room_id = ri,
                     }
@@ -599,7 +600,7 @@ impl Model {
 
         // Order the backend to make requests to the homeserver according to the command received
         match cmd {
-            BkCommand::Connect => match self.bk_type {
+            BkCommand::Connect => match *self.bk_type.read().unwrap() {
                 BackendChoice::CS => match self.cs_session.read().unwrap().access_token {
                     None => match self.connection_task {
                         None => {
@@ -633,7 +634,7 @@ impl Model {
                         .join_room(self.joining_room_callback.clone()),
                 )
             }
-            BkCommand::Sync => match self.bk_type {
+            BkCommand::Sync => match *self.bk_type.read().unwrap() {
                 BackendChoice::CS => {
                     let next_batch_token = self.cs_session.read().unwrap().next_batch_token.clone();
 
@@ -653,7 +654,7 @@ impl Model {
                     }
                 }
             },
-            BkCommand::MoreMsg => match self.bk_type {
+            BkCommand::MoreMsg => match *self.bk_type.read().unwrap() {
                 BackendChoice::CS => match self.more_msg_task {
                     None => {
                         self.more_msg_task = Some(
@@ -666,11 +667,17 @@ impl Model {
                 BackendChoice::Postgres => match self.ancestors_task {
                     None => match &self.events_dag {
                         Some(dag) => {
-                            let from = &dag.read().unwrap().earliest_events;
+                            let input: web::html_element::InputElement = web::document()
+                                .query_selector("#ancestors-id")
+                                .expect("Couldn't get document element")
+                                .expect("Couldn't get document element")
+                                .try_into()
+                                .unwrap();
+                            let from = vec![input.raw_value()];
 
                             self.ancestors_task = Some(
                                 self.pg_backend
-                                    .ancestors(self.ancestors_callback.clone(), from),
+                                    .ancestors(self.ancestors_callback.clone(), &from),
                             );
                         }
                         None => self.console.log("There was no DAG"),
@@ -687,7 +694,7 @@ impl Model {
                 }
                 Some(_) => self.console.log("Already leaving the room"),
             },
-            BkCommand::Disconnect => match self.bk_type {
+            BkCommand::Disconnect => match *self.bk_type.read().unwrap() {
                 BackendChoice::CS => match self.cs_session.read().unwrap().access_token {
                     None => {
                         self.console.log("You were not connected");
@@ -804,6 +811,8 @@ impl Model {
                                     "#more-ev-target",
                                     "#selected-event",
                                     "#display-body-target",
+                                    "#ancestors-id",
+                                    "#ancestors-target",
                                 );
                             }
                             None => self.console.log("Failed to build the DAG"),
@@ -934,6 +943,8 @@ impl Model {
                             "#more-ev-target",
                             "#selected-event",
                             "#display-body-target",
+                            "#ancestors-id",
+                            "#ancestors-target",
                         );
                     }
                     None => self.console.log("Failed to build the DAG"),
@@ -1013,16 +1024,16 @@ impl Model {
     }
 
     fn display_backend_choice(&self) -> Html<Self> {
-        if (self.bk_type == BackendChoice::CS
-            && self.cs_session.read().unwrap().access_token.is_none())
-            || (self.bk_type == BackendChoice::Postgres
-                && !self.pg_session.read().unwrap().connected)
+        let bk_type = *self.bk_type.read().unwrap();
+
+        if (bk_type == BackendChoice::CS && self.cs_session.read().unwrap().access_token.is_none())
+            || (bk_type == BackendChoice::Postgres && !self.pg_session.read().unwrap().connected)
         {
             html! {
                 <>
-                    <input type="radio", id="cs-bk", name="bk-type", value="cs-bk", checked=(self.bk_type == BackendChoice::CS), onclick=|_| Msg::UI(UIEvent::ChooseCSBackend),/>
+                    <input type="radio", id="cs-bk", name="bk-type", value="cs-bk", checked=(bk_type == BackendChoice::CS), onclick=|_| Msg::UI(UIEvent::ChooseCSBackend),/>
                     <label for="cs-bk",>{ "CS backend" }</label>
-                    <input type="radio", id="pg-bk", name="bk-type", value="pg-bk", checked=(self.bk_type == BackendChoice::Postgres), onclick=|_| Msg::UI(UIEvent::ChoosePostgresBackend),/>
+                    <input type="radio", id="pg-bk", name="bk-type", value="pg-bk", checked=(bk_type == BackendChoice::Postgres), onclick=|_| Msg::UI(UIEvent::ChoosePostgresBackend),/>
                     <label for="pg-bk",>{ "Synapse PostgreSQL backend" }</label>
                 </>
             }
@@ -1034,7 +1045,7 @@ impl Model {
     }
 
     fn display_interaction_list(&self) -> Html<Self> {
-        match self.bk_type {
+        match *self.bk_type.read().unwrap() {
             BackendChoice::CS => {
                 html! {
                     <ul>
@@ -1134,10 +1145,12 @@ impl Renderable<Model> for Model {
             </section>
 
             <section class="to-hide",>
-                <p>{ "The elements in this section should be hidden" }</p>
                 <button id="more-ev-target", onclick=|_| Msg::BkCmd(BkCommand::MoreMsg),>{ "More events" }</button>
                 <input type="text", id="selected-event",/>
                 <button id="display-body-target", onclick=|_| Msg::UICmd(UICommand::DisplayEventBody),>{ "Display body" }</button>
+
+                <input type="text", id="ancestors-id",/>
+                <button id="ancestors-target", onclick=|_| Msg::BkCmd(BkCommand::MoreMsg),>{ "Ancestors" }</button>
             </section>
 
             <div class="view",>
