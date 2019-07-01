@@ -47,7 +47,7 @@ impl PostgresBackend {
     pub fn ancestors(
         &mut self,
         callback: Callback<Result<EventsResponse, Error>>,
-        from: &Vec<&str>,
+        from: &Vec<String>,
     ) -> FetchTask {
         let (server_name, room_id) = {
             let session = self.session.read().unwrap();
@@ -75,7 +75,7 @@ impl PostgresBackend {
     pub fn descendants(
         &mut self,
         callback: Callback<Result<EventsResponse, Error>>,
-        from: &Vec<&str>,
+        from: &Vec<String>,
     ) -> FetchTask {
         let (server_name, room_id) = {
             let session = self.session.read().unwrap();

@@ -306,8 +306,24 @@ impl Model {
         // Change the informations of the session whenever their corresponding entries in the UI
         // are changed
         match event {
-            UIEvent::ChooseCSBackend => self.bk_type = BackendChoice::CS,
-            UIEvent::ChoosePostgresBackend => self.bk_type = BackendChoice::Postgres,
+            UIEvent::ChooseCSBackend => {
+                self.bk_type = BackendChoice::CS;
+
+                let mut cs_session = self.cs_session.write().unwrap();
+                let pg_session = self.pg_session.read().unwrap();
+
+                cs_session.server_name = pg_session.server_name.clone();
+                cs_session.room_id = pg_session.room_id.clone();
+            }
+            UIEvent::ChoosePostgresBackend => {
+                self.bk_type = BackendChoice::Postgres;
+
+                let mut pg_session = self.pg_session.write().unwrap();
+                let cs_session = self.cs_session.read().unwrap();
+
+                pg_session.server_name = cs_session.server_name.clone();
+                pg_session.room_id = cs_session.room_id.clone();
+            }
             UIEvent::ServerName(sn) => {
                 if let html::ChangeData::Value(sn) = sn {
                     match self.bk_type {
@@ -995,33 +1011,76 @@ impl Model {
             }
         }
     }
+
+    fn display_backend_choice(&self) -> Html<Self> {
+        if (self.bk_type == BackendChoice::CS
+            && self.cs_session.read().unwrap().access_token.is_none())
+            || (self.bk_type == BackendChoice::Postgres
+                && !self.pg_session.read().unwrap().connected)
+        {
+            html! {
+                <>
+                    <input type="radio", id="cs-bk", name="bk-type", value="cs-bk", checked=(self.bk_type == BackendChoice::CS), onclick=|_| Msg::UI(UIEvent::ChooseCSBackend),/>
+                    <label for="cs-bk",>{ "CS backend" }</label>
+                    <input type="radio", id="pg-bk", name="bk-type", value="pg-bk", checked=(self.bk_type == BackendChoice::Postgres), onclick=|_| Msg::UI(UIEvent::ChoosePostgresBackend),/>
+                    <label for="pg-bk",>{ "Synapse PostgreSQL backend" }</label>
+                </>
+            }
+        } else {
+            html! {
+                <></>
+            }
+        }
+    }
+
+    fn display_interaction_list(&self) -> Html<Self> {
+        match self.bk_type {
+            BackendChoice::CS => {
+                html! {
+                    <ul>
+                        <li>{ "Server name: " }<input type="text", onchange=|e| Msg::UI(UIEvent::ServerName(e)),/></li>
+
+                        <li>{ "Room ID: " }<input type="text", onchange=|e| Msg::UI(UIEvent::RoomId(e)),/></li>
+
+                        <li>{ "Username: " }<input type="text", onchange=|e| Msg::UI(UIEvent::Username(e)),/></li>
+
+                        <li>{ "Password: " }<input type="password", onchange=|e| Msg::UI(UIEvent::Password(e)),/></li>
+
+                        <li>
+                            <button onclick=|_| Msg::BkCmd(BkCommand::Connect),>{ "Connect" }</button>
+                            <button onclick=|_| Msg::BkCmd(BkCommand::Disconnect),>{ "Disconnect" }</button>
+                            <button onclick=|_| Msg::BkCmd(BkCommand::LeaveRoom),>{ "Leave room and disconnect" }</button>
+                        </li>
+                    </ul>
+                }
+            }
+            BackendChoice::Postgres => {
+                html! {
+                    <ul>
+                        <li>{ "Server name: " }<input type="text", onchange=|e| Msg::UI(UIEvent::ServerName(e)),/></li>
+
+                        <li>{ "Room ID: " }<input type="text", onchange=|e| Msg::UI(UIEvent::RoomId(e)),/></li>
+
+                        <li>
+                            <button onclick=|_| Msg::BkCmd(BkCommand::Connect),>{ "Start observation" }</button>
+                            <button onclick=|_| Msg::BkCmd(BkCommand::Disconnect),>{ "Stop observation" }</button>
+                        </li>
+                    </ul>
+                }
+            }
+        }
+    }
 }
 
 impl Renderable<Model> for Model {
     fn view(&self) -> Html<Self> {
         html! {
-            <ul>
-                <li>
-                    <input type="radio", id="cs-bk", name="bk-type", value="cs-bk", checked=(self.bk_type == BackendChoice::CS), onclick=|_| Msg::UI(UIEvent::ChooseCSBackend),/>
-                    <label for="cs-bk",>{ "CS backend" }</label>
-                    <input type="radio", id="pg-bk", name="bk-type", value="pg-bk", checked=(self.bk_type == BackendChoice::Postgres), onclick=|_| Msg::UI(UIEvent::ChoosePostgresBackend),/>
-                    <label for="pg-bk",>{ "Synapse PostgreSQL backend" }</label>
-                </li>
+            <section class="backend-choice",>
+                { self.display_backend_choice() }
+            </section>
 
-                <li>{ "Server name: " }<input type="text", onchange=|e| Msg::UI(UIEvent::ServerName(e)),/></li>
+            { self.display_interaction_list() }
 
-                <li>{ "Room ID: " }<input type="text", onchange=|e| Msg::UI(UIEvent::RoomId(e)),/></li>
-
-                <li>{ "Username: " }<input type="text", onchange=|e| Msg::UI(UIEvent::Username(e)),/></li>
-
-                <li>{ "Password: " }<input type="password", onchange=|e| Msg::UI(UIEvent::Password(e)),/></li>
-
-                <li>
-                    <button onclick=|_| Msg::BkCmd(BkCommand::Connect),>{ "Connect" }</button>
-                    <button onclick=|_| Msg::BkCmd(BkCommand::Disconnect),>{ "Disconnect" }</button>
-                    <button onclick=|_| Msg::BkCmd(BkCommand::LeaveRoom),> { "Leave room and disconnect" }</button>
-                </li>
-            </ul>
 
             <section class="fields-choice",>
                 <p>{ "Event fields to show in the DAG:" }</p>
