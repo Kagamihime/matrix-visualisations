@@ -1,21 +1,28 @@
 use std::sync::{Arc, RwLock};
 
-use crate::model::dag::{DataSet, OrphanInfo};
+use serde_derive::Serialize;
 use stdweb::web;
 use stdweb::web::IParentNode;
 use stdweb::Value;
 
 use crate::model::dag::RoomEvents;
+use crate::model::dag::{DataSet, OrphanInfo};
 use crate::BackendChoice;
+use crate::View;
 
 pub struct VisJsService {
     lib: Option<Value>,
     network: Option<Value>,
     bk_type: Arc<RwLock<BackendChoice>>,
     data: Option<Value>,
-    earliest_events: Vec<String>,
-    latest_events: Vec<String>,
-    orphan_events: Vec<OrphanInfo>,
+    earliest_events: Vec<Vec<String>>,
+    latest_events: Vec<Vec<String>>,
+    orphan_events: Vec<Vec<OrphanInfo>>,
+}
+
+#[derive(Clone, Copy, Serialize)]
+struct ViewId {
+    id: usize,
 }
 
 impl VisJsService {
@@ -29,16 +36,16 @@ impl VisJsService {
             network: None,
             bk_type,
             data: None,
-            earliest_events: Vec::new(),
-            latest_events: Vec::new(),
-            orphan_events: Vec::new(),
+            earliest_events: vec![Vec::new(); 2],
+            latest_events: vec![Vec::new(); 2],
+            orphan_events: vec![Vec::new(); 2],
         }
     }
 
-    pub fn display_dag(
+    pub fn init(
         &mut self,
-        events_dag: Arc<RwLock<RoomEvents>>,
         container_id: &str,
+        targeted_view_input_id: &str,
         more_ev_btn_id: &str,
         selected_event_input_id: &str,
         display_body_btn_id: &str,
@@ -46,15 +53,13 @@ impl VisJsService {
         ancestors_btn_id: &str,
     ) {
         let lib = self.lib.as_ref().expect("vis library object lost");
-        let backend = *self.bk_type.read().unwrap();
-        let mut events_dag = events_dag.write().unwrap();
-
-        let data = events_dag.create_data_set();
-        let earliest_events = &events_dag.earliest_events;
-        let orphan_events = &events_dag.orphan_events;
 
         let container = web::document()
             .query_selector(container_id)
+            .expect("Couldn't get document element")
+            .expect("Couldn't get document element");
+        let targeted_view_input = web::document()
+            .query_selector(targeted_view_input_id)
             .expect("Couldn't get document element")
             .expect("Couldn't get document element");
         let more_ev_btn = web::document()
@@ -80,74 +85,19 @@ impl VisJsService {
 
         js_serializable!(DataSet);
         js_serializable!(OrphanInfo);
+        js_serializable!(ViewId);
 
-        match backend {
-            BackendChoice::CS => {
-                self.data = Some(js! {
-                    var d = @{data};
+        self.data = Some(js! {
+            var nodes = new vis.DataSet({});
+            var edges = new vis.DataSet({});
 
-                    var min_depth = -1;
-                    for (let n of d.nodes) {
-                        if (min_depth == -1 || n["level"] < min_depth) {
-                            min_depth = n["level"];
-                        }
-                    }
+            var data = {
+                nodes: nodes,
+                edges: edges
+            };
 
-                    var nodes = new vis.DataSet(d.nodes);
-                    var edges = new vis.DataSet(d.edges);
-
-                    // Add special button to load more events
-                    nodes.add({
-                        id: "more_ev",
-                        label: "Load more events",
-                        level: min_depth - 1
-                    });
-                    for (let ev of @{earliest_events}) {
-                        edges.add({
-                            id: ev,
-                            from: ev,
-                            to: "more_ev"
-                        });
-                    }
-
-                    var data = {
-                        nodes: nodes,
-                        edges: edges
-                    };
-
-                    return data;
-                })
-            }
-            BackendChoice::Postgres => {
-                self.data = Some(js! {
-                    var d = @{data};
-
-                    var nodes = new vis.DataSet(d.nodes);
-                    var edges = new vis.DataSet(d.edges);
-
-                    for (let ev of @{orphan_events}) {
-                        nodes.add({
-                            id: "more_of_" + ev.id,
-                            label: "Load ancestors",
-                            level: ev.depth - 1
-                        });
-
-                        edges.add({
-                            id: ev.id,
-                            from: ev.id,
-                            to: "more_of_" + ev.id
-                        });
-                    }
-
-                    var data = {
-                        nodes: nodes,
-                        edges: edges
-                    };
-
-                    return data;
-                })
-            }
-        }
+            return data;
+        });
 
         self.network = Some(js! {
             var vis = @{lib};
@@ -189,14 +139,23 @@ impl VisJsService {
             function select_node() {
                 let id = network.getSelectedNodes()[0];
 
-                if (id == "more_ev") {
+                if (id.endsWith("_more_ev")) {
+                    let split_id = id.split("_");
+                    let targeted_view_input = @{targeted_view_input.clone()};
+
+                    targeted_view_input.value = split_id[1];
                     @{more_ev_btn}.click();
                 }
 
-                if (id.startsWith("more_of_")) {
+                if (id.includes("_more_of_")) {
+                    let split_id = id.split("_");
+                    let targeted_view_input = @{targeted_view_input};
                     let id_input = @{ancestors_input};
 
-                    id_input.value = id.replace("more_of_", "");
+                    let pref_patt = new RegExp("subdag_[0-9]+_more_of_");
+
+                    targeted_view_input.value = split_id[1];
+                    id_input.value = id.replace(pref_patt, "");
                     @{ancestors_btn}.click();
                 }
             }
@@ -214,20 +173,123 @@ impl VisJsService {
 
             return network;
         });
-
-        self.earliest_events = events_dag.earliest_events.clone();
-        self.latest_events = events_dag.latest_events.clone();
-        self.orphan_events = events_dag.orphan_events.clone();
     }
 
-    pub fn update_dag(&mut self, events_dag: Arc<RwLock<RoomEvents>>) {
+    pub fn add_dag(&mut self, events_dag: Arc<RwLock<RoomEvents>>, view_id: usize) {
+        let backend = *self.bk_type.read().unwrap();
+        let events_dag = events_dag.read().unwrap();
+
+        let data = self.data.as_ref().expect("No data set found");
+        let mut events = events_dag.create_data_set();
+        events.add_prefix(&format!("subdag_{}_", view_id));
+
+        self.earliest_events[view_id] = events_dag.earliest_events.clone();
+        self.latest_events[view_id] = events_dag.latest_events.clone();
+        self.orphan_events[view_id] = events_dag.orphan_events.clone();
+
+        let view_id = ViewId { id: view_id };
+
+        match backend {
+            BackendChoice::CS => {
+                self.data = Some(js! {
+                    var view_id = @{view_id};
+                    var data = @{data};
+                    var events = @{events};
+
+                    var min_depth = -1;
+                    for (let n of events.nodes) {
+                        if (min_depth == -1 || n["level"] < min_depth) {
+                            min_depth = n["level"];
+                        }
+                    }
+
+                    data.nodes.add(events.nodes);
+                    data.edges.add(events.edges);
+
+                    // Add the button to load more events
+                    data.nodes.add({
+                        id: "subdag_" + view_id.id + "_more_ev",
+                        label: "Load more events",
+                        level: min_depth - 1
+                    });
+                    for (let ev of @{&self.earliest_events[view_id.id]}) {
+                        data.edges.add({
+                            id: "subdag_" + view_id.id + "_" + ev + "_more_ev",
+                            from: "subdag_" + view_id.id + "_" + ev,
+                            to: "subdag_" + view_id.id + "_more_ev"
+                        });
+                    }
+
+                    return data;
+                });
+            }
+            BackendChoice::Postgres => {
+                self.data = Some(js! {
+                    var view_id = @{view_id};
+                    var data = @{data};
+                    var events = @{events};
+
+                    data.nodes.add(events.nodes);
+                    data.edges.add(events.edges);
+
+                    // Add the buttons to load ancestors
+                    for (let ev of @{&self.orphan_events[view_id.id]}) {
+                        data.nodes.add({
+                            id: "subdag_" + view_id.id + "_more_of_" + ev.id,
+                            label: "Load ancestors",
+                            level: ev.depth - 1
+                        });
+
+                        data.edges.add({
+                            id: "subdag_" + view_id.id + "_" + ev.id + "_more_of",
+                            from: "subdag_" + view_id.id + "_" + ev.id,
+                            to: "subdag_" + view_id.id + "_more_of_" + ev.id
+                        });
+                    }
+
+                    return data;
+                });
+            }
+        }
+    }
+
+    pub fn remove_dag(&mut self, view_id: usize) {
+        let data = self.data.as_ref().expect("No data set found");
+
+        self.earliest_events[view_id] = Vec::new();
+        self.latest_events[view_id] = Vec::new();
+        self.orphan_events[view_id] = Vec::new();
+
+        let view_id = ViewId { id: view_id };
+
+        self.data = Some(js! {
+            var view_id = @{view_id};
+            var data = @{data};
+
+            for (let node of data.nodes.get()) {
+                if (node.id.startsWith("subdag_" + view_id.id + "_")) {
+                    data.nodes.remove(node.id);
+                }
+            }
+
+            for (let edge of data.edges.get()) {
+                if (edge.id.startsWith("subdag_" + view_id.id + "_")) {
+                    data.edges.remove(edge.id);
+                }
+            }
+
+            return data;
+        });
+    }
+
+    pub fn update_dag(&mut self, events_dag: Arc<RwLock<RoomEvents>>, view_id: usize) {
         let events_dag = events_dag.read().unwrap();
         let backend = *self.bk_type.read().unwrap();
 
-        if self.earliest_events != events_dag.earliest_events {
-            let old_earliest_events = self.earliest_events.clone();
+        if self.earliest_events[view_id] != events_dag.earliest_events {
+            let old_earliest_events = self.earliest_events[view_id].clone();
             let new_earliest_events = events_dag.earliest_events.clone();
-            let old_orphan_events = self.orphan_events.clone();
+            let old_orphan_events = self.orphan_events[view_id].clone();
             let new_orphan_events = events_dag.orphan_events.clone();
 
             let data = self.data.as_ref().expect("No data set found");
@@ -235,10 +297,14 @@ impl VisJsService {
             let mut earlier_events = DataSet::new();
             events_dag
                 .add_earlier_events_to_data_set(&mut earlier_events, old_earliest_events.clone());
+            earlier_events.add_prefix(&format!("subdag_{}_", view_id));
+
+            let view_id = ViewId { id: view_id };
 
             match backend {
                 BackendChoice::CS => {
                     self.data = Some(js! {
+                        var view_id = @{view_id};
                         var data = @{data};
                         var ev = @{earlier_events};
 
@@ -254,19 +320,19 @@ impl VisJsService {
 
                         // Update the position of the button to load more events
                         for (let ev of @{old_earliest_events}) {
-                            data.edges.remove(ev);
+                            data.edges.remove("subdag_" + view_id.id + "_" + ev + "_more_ev");
                         }
-                        data.nodes.remove("more_ev");
+                        data.nodes.remove("subdag_" + view_id.id + "_more_ev");
                         data.nodes.add({
-                            id: "more_ev",
+                            id: "subdag_" + view_id.id + "_more_ev",
                             label: "Load more events",
                             level: min_depth - 1
                         });
                         for (let ev of @{new_earliest_events}) {
                             data.edges.add({
-                                id: ev,
-                                from: ev,
-                                to: "more_ev"
+                                id: "subdag_" + view_id.id + "_" + ev + "_move_ev",
+                                from: "subdag_" + view_id.id + "_" + ev,
+                                to: "subdag_" + view_id.id + "_more_ev"
                             });
                         }
 
@@ -275,6 +341,7 @@ impl VisJsService {
                 }
                 BackendChoice::Postgres => {
                     self.data = Some(js! {
+                        var view_id = @{view_id};
                         var data = @{data};
                         var ev = @{earlier_events};
 
@@ -282,20 +349,20 @@ impl VisJsService {
                         data.edges.add(ev.edges);
 
                         for (let ev of @{old_orphan_events}) {
-                            data.edges.remove(ev.id);
-                            data.nodes.remove("more_of_" + ev.id);
+                            data.edges.remove("subdag_" + view_id.id + "_" + ev.id + "_more_of");
+                            data.nodes.remove("subdag_" + view_id.id + "_more_of_" + ev.id);
                         }
                         for (let ev of @{new_orphan_events}) {
                             data.nodes.add({
-                                id: "more_of_" + ev.id,
+                                id: "subdag_" + view_id.id + "_more_of_" + ev.id,
                                 label: "Load ancestors",
                                 level: ev.depth - 1
                             });
 
                             data.edges.add({
-                                id: ev.id,
-                                from: ev.id,
-                                to: "more_of_" + ev.id
+                                id: "subdag_" + view_id.id + "_" + ev.id + "_more_of",
+                                from: "subdag_" + view_id.id + "_" + ev.id,
+                                to: "subdag_" + view_id.id + "_more_of_" + ev.id
                             });
                         }
 
@@ -304,15 +371,16 @@ impl VisJsService {
                 }
             }
 
-            self.earliest_events = events_dag.earliest_events.clone();
-            self.orphan_events = events_dag.orphan_events.clone();
+            self.earliest_events[view_id.id] = events_dag.earliest_events.clone();
+            self.orphan_events[view_id.id] = events_dag.orphan_events.clone();
         }
 
-        if self.latest_events != events_dag.latest_events {
+        if self.latest_events[view_id] != events_dag.latest_events {
             let data = self.data.as_ref().expect("No data set found");
 
             let mut new_events = DataSet::new();
-            events_dag.add_new_events_to_data_set(&mut new_events, self.latest_events.clone());
+            events_dag.add_new_events_to_data_set(&mut new_events, self.latest_events[0].clone());
+            new_events.add_prefix(&format!("subdag_{}_", view_id));
 
             self.data = Some(js! {
                 var data = @{data};
@@ -324,14 +392,14 @@ impl VisJsService {
                 return data;
             });
 
-            self.latest_events = events_dag.latest_events.clone();
+            self.latest_events[view_id] = events_dag.latest_events.clone();
         }
     }
 
-    pub fn update_labels(&mut self, events_dag: Arc<RwLock<RoomEvents>>) {
-        self.update_dag(events_dag.clone());
+    pub fn update_labels(&mut self, events_dag: Arc<RwLock<RoomEvents>>, view_id: usize) {
+        self.update_dag(events_dag.clone(), view_id);
 
-        let mut events_dag = events_dag.write().unwrap();
+        let events_dag = events_dag.read().unwrap();
         let new_data = events_dag.create_data_set();
         let data = self.data.as_ref().expect("No data set found");
 
@@ -345,6 +413,7 @@ impl VisJsService {
         });
     }
 
+    // TODO: maybe this will have to change
     pub fn is_active(&self) -> bool {
         self.network.is_some()
     }
