@@ -42,6 +42,37 @@ pub struct Model {
     vis: VisJsService,
     link: ComponentLink<Self>,
 
+    bk_type: Arc<RwLock<BackendChoice>>,
+    view_idx: usize,
+    views: Vec<View>,
+    event_body: Option<String>,
+    fields_choice: FieldsChoice,
+}
+
+pub enum View {
+    CS(CSView),
+    Postgres(PgView),
+}
+
+impl View {
+    pub fn get_id(&self) -> usize {
+        match self {
+            View::CS(v) => v.id,
+            View::Postgres(v) => v.id,
+        }
+    }
+
+    pub fn get_events_dag(&self) -> &Option<Arc<RwLock<RoomEvents>>> {
+        match self {
+            View::CS(v) => &v.events_dag,
+            View::Postgres(v) => &v.events_dag,
+        }
+    }
+}
+
+pub struct CSView {
+    id: usize,
+
     connection_callback: Callback<Result<ConnectionResponse, Error>>,
     connection_task: Option<FetchTask>,
 
@@ -63,6 +94,87 @@ pub struct Model {
     disconnection_callback: Callback<Result<(), Error>>,
     disconnection_task: Option<FetchTask>,
 
+    session: Arc<RwLock<CSSession>>,
+    backend: CSBackend,
+    events_dag: Option<Arc<RwLock<RoomEvents>>>,
+}
+
+impl CSView {
+    pub fn new(id: usize, link: &mut ComponentLink<Model>) -> CSView {
+        let session = Arc::new(RwLock::new(CSSession::empty()));
+
+        CSView {
+            id,
+
+            connection_callback: link.send_back(
+                move |response: Result<ConnectionResponse, Error>| match response {
+                    Ok(res) => Msg::BkRes(BkResponse::Connected(id, res)),
+                    Err(_) => Msg::BkRes(BkResponse::ConnectionFailed(id)),
+                },
+            ),
+            connection_task: None,
+
+            listing_rooms_callback: link.send_back(move |response: Result<JoinedRooms, Error>| {
+                match response {
+                    Ok(res) => Msg::BkRes(BkResponse::RoomsList(id, res)),
+                    Err(e) => {
+                        ConsoleService::new().log(&format!("{}", e));
+                        Msg::BkRes(BkResponse::ListingRoomsFailed(id))
+                    }
+                }
+            }),
+            listing_rooms_task: None,
+
+            joining_room_callback: link.send_back(
+                move |response: Result<(), Error>| match response {
+                    Ok(_) => Msg::BkRes(BkResponse::RoomJoined(id)),
+                    Err(_) => Msg::BkRes(BkResponse::JoiningRoomFailed(id)),
+                },
+            ),
+            joining_room_task: None,
+
+            sync_callback: link.send_back(move |response: Result<SyncResponse, Error>| {
+                match response {
+                    Ok(res) => Msg::BkRes(BkResponse::Synced(id, res)),
+                    Err(_) => Msg::BkRes(BkResponse::SyncFailed(id)),
+                }
+            }),
+            sync_task: None,
+
+            more_msg_callback: link.send_back(move |response: Result<MessagesResponse, Error>| {
+                match response {
+                    Ok(res) => Msg::BkRes(BkResponse::MsgGot(id, res)),
+                    Err(_) => Msg::BkRes(BkResponse::MoreMsgFailed(id)),
+                }
+            }),
+            more_msg_task: None,
+
+            leaving_room_callback: link.send_back(
+                move |response: Result<(), Error>| match response {
+                    Ok(_) => Msg::BkRes(BkResponse::RoomLeft(id)),
+                    Err(_) => Msg::BkRes(BkResponse::LeavingRoomFailed(id)),
+                },
+            ),
+            leaving_room_task: None,
+
+            disconnection_callback: link.send_back(
+                move |response: Result<(), Error>| match response {
+                    Ok(_) => Msg::BkRes(BkResponse::Disconnected(id)),
+                    Err(_) => Msg::BkRes(BkResponse::DisconnectionFailed(id)),
+                },
+            ),
+            disconnection_task: None,
+
+            session: session.clone(),
+            backend: CSBackend::with_session(session),
+            events_dag: None,
+        }
+    }
+}
+
+pub struct PgView {
+    id: usize,
+
     deepest_callback: Callback<Result<EventsResponse, Error>>,
     deepest_task: Option<FetchTask>,
 
@@ -73,14 +185,48 @@ pub struct Model {
     descendants_task: Option<FetchTask>,
     descendants_timeout_task: Option<TimeoutTask>,
 
-    bk_type: Arc<RwLock<BackendChoice>>,
-    cs_backend: CSBackend,
-    pg_backend: PostgresBackend,
-    cs_session: Arc<RwLock<CSSession>>,
-    pg_session: Arc<RwLock<PgSession>>,
+    session: Arc<RwLock<PgSession>>,
+    backend: PostgresBackend,
     events_dag: Option<Arc<RwLock<RoomEvents>>>,
-    event_body: Option<String>,
-    fields_choice: FieldsChoice,
+}
+
+impl PgView {
+    pub fn new(id: usize, link: &mut ComponentLink<Model>) -> PgView {
+        let session = Arc::new(RwLock::new(PgSession::empty()));
+
+        PgView {
+            id,
+
+            deepest_callback: link.send_back(move |response: Result<EventsResponse, Error>| {
+                match response {
+                    Ok(res) => Msg::BkRes(BkResponse::DeepestEvents(id, res)),
+                    Err(_) => Msg::BkRes(BkResponse::DeepestRqFailed(id)),
+                }
+            }),
+            deepest_task: None,
+
+            ancestors_callback: link.send_back(move |response: Result<EventsResponse, Error>| {
+                match response {
+                    Ok(res) => Msg::BkRes(BkResponse::Ancestors(id, res)),
+                    Err(_) => Msg::BkRes(BkResponse::AncestorsRqFailed(id)),
+                }
+            }),
+            ancestors_task: None,
+
+            descendants_callback: link.send_back(move |response: Result<EventsResponse, Error>| {
+                match response {
+                    Ok(res) => Msg::BkRes(BkResponse::Descendants(id, res)),
+                    Err(_) => Msg::BkRes(BkResponse::DescendantsRqFailed(id)),
+                }
+            }),
+            descendants_task: None,
+            descendants_timeout_task: None,
+
+            session: session.clone(),
+            backend: PostgresBackend::with_session(session),
+            events_dag: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -114,6 +260,7 @@ pub enum Msg {
 pub enum UIEvent {
     ChooseCSBackend,
     ChoosePostgresBackend,
+    ViewChoice(usize),
     ServerName(html::ChangeData),
     RoomId(html::ChangeData),
 
@@ -137,40 +284,40 @@ pub enum UICommand {
 
 /// These messages are used by the frontend to send commands to the backend.
 pub enum BkCommand {
-    Connect,
-    ListRooms,
-    JoinRoom,
-    Sync,
+    Connect(usize),
+    ListRooms(usize),
+    JoinRoom(usize),
+    Sync(usize),
     MoreMsg,
-    LeaveRoom,
-    Disconnect,
+    LeaveRoom(usize),
+    Disconnect(usize),
 }
 
 /// These messages are responses from the backend to the frontend.
 pub enum BkResponse {
-    Connected(ConnectionResponse),
-    RoomsList(JoinedRooms),
-    RoomJoined,
-    Synced(SyncResponse),
-    MsgGot(MessagesResponse),
-    RoomLeft,
-    Disconnected,
+    Connected(usize, ConnectionResponse),
+    RoomsList(usize, JoinedRooms),
+    RoomJoined(usize),
+    Synced(usize, SyncResponse),
+    MsgGot(usize, MessagesResponse),
+    RoomLeft(usize),
+    Disconnected(usize),
 
-    ConnectionFailed,
-    ListingRoomsFailed,
-    JoiningRoomFailed,
-    SyncFailed,
-    MoreMsgFailed,
-    LeavingRoomFailed,
-    DisconnectionFailed,
+    ConnectionFailed(usize),
+    ListingRoomsFailed(usize),
+    JoiningRoomFailed(usize),
+    SyncFailed(usize),
+    MoreMsgFailed(usize),
+    LeavingRoomFailed(usize),
+    DisconnectionFailed(usize),
 
-    DeepestEvents(EventsResponse),
-    Ancestors(EventsResponse),
-    Descendants(EventsResponse),
+    DeepestEvents(usize, EventsResponse),
+    Ancestors(usize, EventsResponse),
+    Descendants(usize, EventsResponse),
 
-    DeepestRqFailed,
-    AncestorsRqFailed,
-    DescendantsRqFailed,
+    DeepestRqFailed(usize),
+    AncestorsRqFailed(usize),
+    DescendantsRqFailed(usize),
 }
 
 impl Component for Model {
@@ -178,9 +325,11 @@ impl Component for Model {
     type Properties = ();
 
     fn create(_: Self::Properties, mut link: ComponentLink<Self>) -> Self {
-        let new_cs_session = Arc::new(RwLock::new(CSSession::empty()));
-        let new_pg_session = Arc::new(RwLock::new(PgSession::empty()));
         let bk_type = Arc::new(RwLock::new(BackendChoice::CS));
+        let default_views = vec![
+            View::CS(CSView::new(0, &mut link)),
+            View::CS(CSView::new(1, &mut link)),
+        ];
 
         let default_fields_choice = FieldsChoice {
             sender: false,
@@ -201,90 +350,11 @@ impl Component for Model {
             timeout: TimeoutService::new(),
             vis: VisJsService::new(bk_type.clone()),
 
-            connection_callback: link.send_back(|response: Result<ConnectionResponse, Error>| {
-                match response {
-                    Ok(res) => Msg::BkRes(BkResponse::Connected(res)),
-                    Err(_) => Msg::BkRes(BkResponse::ConnectionFailed),
-                }
-            }),
-            connection_task: None,
-
-            listing_rooms_callback: link.send_back(|response: Result<JoinedRooms, Error>| {
-                match response {
-                    Ok(res) => Msg::BkRes(BkResponse::RoomsList(res)),
-                    Err(e) => {
-                        ConsoleService::new().log(&format!("{}", e));
-                        Msg::BkRes(BkResponse::ListingRoomsFailed)
-                    }
-                }
-            }),
-            listing_rooms_task: None,
-
-            joining_room_callback: link.send_back(|response: Result<(), Error>| match response {
-                Ok(_) => Msg::BkRes(BkResponse::RoomJoined),
-                Err(_) => Msg::BkRes(BkResponse::JoiningRoomFailed),
-            }),
-            joining_room_task: None,
-
-            sync_callback: link.send_back(|response: Result<SyncResponse, Error>| match response {
-                Ok(res) => Msg::BkRes(BkResponse::Synced(res)),
-                Err(_) => Msg::BkRes(BkResponse::SyncFailed),
-            }),
-            sync_task: None,
-
-            more_msg_callback: link.send_back(|response: Result<MessagesResponse, Error>| {
-                match response {
-                    Ok(res) => Msg::BkRes(BkResponse::MsgGot(res)),
-                    Err(_) => Msg::BkRes(BkResponse::MoreMsgFailed),
-                }
-            }),
-            more_msg_task: None,
-
-            leaving_room_callback: link.send_back(|response: Result<(), Error>| match response {
-                Ok(_) => Msg::BkRes(BkResponse::RoomLeft),
-                Err(_) => Msg::BkRes(BkResponse::LeavingRoomFailed),
-            }),
-            leaving_room_task: None,
-
-            disconnection_callback: link.send_back(|response: Result<(), Error>| match response {
-                Ok(_) => Msg::BkRes(BkResponse::Disconnected),
-                Err(_) => Msg::BkRes(BkResponse::DisconnectionFailed),
-            }),
-            disconnection_task: None,
-
-            deepest_callback: link.send_back(|response: Result<EventsResponse, Error>| {
-                match response {
-                    Ok(res) => Msg::BkRes(BkResponse::DeepestEvents(res)),
-                    Err(_) => Msg::BkRes(BkResponse::DeepestRqFailed),
-                }
-            }),
-            deepest_task: None,
-
-            ancestors_callback: link.send_back(|response: Result<EventsResponse, Error>| {
-                match response {
-                    Ok(res) => Msg::BkRes(BkResponse::Ancestors(res)),
-                    Err(_) => Msg::BkRes(BkResponse::AncestorsRqFailed),
-                }
-            }),
-            ancestors_task: None,
-
-            descendants_callback: link.send_back(|response: Result<EventsResponse, Error>| {
-                match response {
-                    Ok(res) => Msg::BkRes(BkResponse::Descendants(res)),
-                    Err(_) => Msg::BkRes(BkResponse::DescendantsRqFailed),
-                }
-            }),
-            descendants_task: None,
-            descendants_timeout_task: None,
-
             link,
 
             bk_type: bk_type,
-            cs_backend: CSBackend::with_session(new_cs_session.clone()),
-            pg_backend: PostgresBackend::with_session(new_pg_session.clone()),
-            cs_session: new_cs_session,
-            pg_session: new_pg_session,
-            events_dag: None,
+            view_idx: 0,
+            views: default_views,
             event_body: None,
             fields_choice: default_fields_choice,
         }
@@ -310,47 +380,119 @@ impl Model {
             UIEvent::ChooseCSBackend => {
                 *self.bk_type.write().unwrap() = BackendChoice::CS;
 
-                let mut cs_session = self.cs_session.write().unwrap();
-                let pg_session = self.pg_session.read().unwrap();
+                let mut new_views: Vec<CSView> = (0..self.views.len())
+                    .map(|id| CSView::new(id, &mut self.link))
+                    .collect();
 
-                cs_session.server_name = pg_session.server_name.clone();
-                cs_session.room_id = pg_session.room_id.clone();
+                for (old_view, new_view) in self.views.iter().zip(new_views.iter_mut()) {
+                    if let View::Postgres(old_view) = old_view {
+                        let pg_session = old_view.session.read().unwrap();
+                        let mut new_session = new_view.session.write().unwrap();
+
+                        new_session.server_name = pg_session.server_name.clone();
+                        new_session.room_id = pg_session.room_id.clone();
+                    }
+                }
+
+                let new_views = new_views.into_iter().map(|view| View::CS(view)).collect();
+
+                self.views = new_views;
             }
             UIEvent::ChoosePostgresBackend => {
                 *self.bk_type.write().unwrap() = BackendChoice::Postgres;
 
-                let mut pg_session = self.pg_session.write().unwrap();
-                let cs_session = self.cs_session.read().unwrap();
+                let mut new_views: Vec<PgView> = (0..self.views.len())
+                    .map(|id| PgView::new(id, &mut self.link))
+                    .collect();
 
-                pg_session.server_name = cs_session.server_name.clone();
-                pg_session.room_id = cs_session.room_id.clone();
+                for (old_view, new_view) in self.views.iter().zip(new_views.iter_mut()) {
+                    if let View::CS(old_view) = old_view {
+                        let cs_session = old_view.session.read().unwrap();
+                        let mut new_session = new_view.session.write().unwrap();
+
+                        new_session.server_name = cs_session.server_name.clone();
+                        new_session.room_id = cs_session.room_id.clone();
+                    }
+                }
+
+                let new_views = new_views
+                    .into_iter()
+                    .map(|view| View::Postgres(view))
+                    .collect();
+
+                self.views = new_views;
+            }
+            UIEvent::ViewChoice(vc) => {
+                let input: web::html_element::InputElement = web::document()
+                    .query_selector("#server-name-input")
+                    .expect("Couldn't get document element")
+                    .expect("Couldn't get document element")
+                    .try_into()
+                    .unwrap();
+                input.set_raw_value("");
+
+                let input: web::html_element::InputElement = web::document()
+                    .query_selector("#room-id-input")
+                    .expect("Couldn't get document element")
+                    .expect("Couldn't get document element")
+                    .try_into()
+                    .unwrap();
+                input.set_raw_value("");
+
+                if *self.bk_type.read().unwrap() == BackendChoice::CS {
+                    let input: web::html_element::InputElement = web::document()
+                        .query_selector("#username-input")
+                        .expect("Couldn't get document element")
+                        .expect("Couldn't get document element")
+                        .try_into()
+                        .unwrap();
+                    input.set_raw_value("");
+
+                    let input: web::html_element::InputElement = web::document()
+                        .query_selector("#password-input")
+                        .expect("Couldn't get document element")
+                        .expect("Couldn't get document element")
+                        .try_into()
+                        .unwrap();
+                    input.set_raw_value("");
+                }
+
+                self.view_idx = vc;
             }
             UIEvent::ServerName(sn) => {
                 if let html::ChangeData::Value(sn) = sn {
-                    match *self.bk_type.read().unwrap() {
-                        BackendChoice::CS => self.cs_session.write().unwrap().server_name = sn,
-                        BackendChoice::Postgres => {
-                            self.pg_session.write().unwrap().server_name = sn
-                        }
+                    match &self.views[self.view_idx] {
+                        View::CS(view) => view.session.write().unwrap().server_name = sn,
+                        View::Postgres(view) => view.session.write().unwrap().server_name = sn,
                     }
                 }
             }
             UIEvent::RoomId(ri) => {
                 if let html::ChangeData::Value(ri) = ri {
-                    match *self.bk_type.read().unwrap() {
-                        BackendChoice::CS => self.cs_session.write().unwrap().room_id = ri,
-                        BackendChoice::Postgres => self.pg_session.write().unwrap().room_id = ri,
+                    for view in &self.views {
+                        match view {
+                            View::CS(view) => {
+                                view.session.write().unwrap().room_id = ri.clone();
+                            }
+                            View::Postgres(view) => {
+                                view.session.write().unwrap().room_id = ri.clone();
+                            }
+                        }
                     }
                 }
             }
             UIEvent::Username(u) => {
                 if let html::ChangeData::Value(u) = u {
-                    self.cs_session.write().unwrap().username = u;
+                    if let View::CS(view) = &mut self.views[self.view_idx] {
+                        view.session.write().unwrap().username = u;
+                    }
                 }
             }
             UIEvent::Password(p) => {
                 if let html::ChangeData::Value(p) = p {
-                    self.cs_session.write().unwrap().password = p;
+                    if let View::CS(view) = &mut self.views[self.view_idx] {
+                        view.session.write().unwrap().password = p;
+                    }
                 }
             }
             UIEvent::ToggleSender => {
@@ -364,15 +506,17 @@ impl Model {
                     fc.fields.remove(&Field::Sender);
                 }
 
-                if let Some(events_dag) = self.events_dag.as_ref() {
-                    let mut events_dag = events_dag.write().unwrap();
+                for view in &self.views {
+                    if let Some(events_dag) = view.get_events_dag() {
+                        let mut events_dag = events_dag.write().unwrap();
 
-                    events_dag.change_fields(&fc.fields);
-                }
+                        events_dag.change_fields(&fc.fields);
+                    }
 
-                if self.vis.is_active() {
-                    if let Some(events_dag) = self.events_dag.as_ref() {
-                        self.vis.update_labels(events_dag.clone());
+                    if self.vis.is_active() {
+                        if let Some(events_dag) = view.get_events_dag() {
+                            self.vis.update_labels(events_dag.clone(), view.get_id());
+                        }
                     }
                 }
             }
@@ -387,15 +531,17 @@ impl Model {
                     fc.fields.remove(&Field::Origin);
                 }
 
-                if let Some(events_dag) = self.events_dag.as_ref() {
-                    let mut events_dag = events_dag.write().unwrap();
+                for view in &self.views {
+                    if let Some(events_dag) = view.get_events_dag() {
+                        let mut events_dag = events_dag.write().unwrap();
 
-                    events_dag.change_fields(&fc.fields);
-                }
+                        events_dag.change_fields(&fc.fields);
+                    }
 
-                if self.vis.is_active() {
-                    if let Some(events_dag) = self.events_dag.as_ref() {
-                        self.vis.update_labels(events_dag.clone());
+                    if self.vis.is_active() {
+                        if let Some(events_dag) = view.get_events_dag() {
+                            self.vis.update_labels(events_dag.clone(), view.get_id());
+                        }
                     }
                 }
             }
@@ -410,15 +556,17 @@ impl Model {
                     fc.fields.remove(&Field::OriginServerTS);
                 }
 
-                if let Some(events_dag) = self.events_dag.as_ref() {
-                    let mut events_dag = events_dag.write().unwrap();
+                for view in &self.views {
+                    if let Some(events_dag) = view.get_events_dag() {
+                        let mut events_dag = events_dag.write().unwrap();
 
-                    events_dag.change_fields(&fc.fields);
-                }
+                        events_dag.change_fields(&fc.fields);
+                    }
 
-                if self.vis.is_active() {
-                    if let Some(events_dag) = self.events_dag.as_ref() {
-                        self.vis.update_labels(events_dag.clone());
+                    if self.vis.is_active() {
+                        if let Some(events_dag) = view.get_events_dag() {
+                            self.vis.update_labels(events_dag.clone(), view.get_id());
+                        }
                     }
                 }
             }
@@ -433,15 +581,17 @@ impl Model {
                     fc.fields.remove(&Field::Type);
                 }
 
-                if let Some(events_dag) = self.events_dag.as_ref() {
-                    let mut events_dag = events_dag.write().unwrap();
+                for view in &self.views {
+                    if let Some(events_dag) = view.get_events_dag() {
+                        let mut events_dag = events_dag.write().unwrap();
 
-                    events_dag.change_fields(&fc.fields);
-                }
+                        events_dag.change_fields(&fc.fields);
+                    }
 
-                if self.vis.is_active() {
-                    if let Some(events_dag) = self.events_dag.as_ref() {
-                        self.vis.update_labels(events_dag.clone());
+                    if self.vis.is_active() {
+                        if let Some(events_dag) = view.get_events_dag() {
+                            self.vis.update_labels(events_dag.clone(), view.get_id());
+                        }
                     }
                 }
             }
@@ -456,15 +606,17 @@ impl Model {
                     fc.fields.remove(&Field::StateKey);
                 }
 
-                if let Some(events_dag) = self.events_dag.as_ref() {
-                    let mut events_dag = events_dag.write().unwrap();
+                for view in &self.views {
+                    if let Some(events_dag) = view.get_events_dag() {
+                        let mut events_dag = events_dag.write().unwrap();
 
-                    events_dag.change_fields(&fc.fields);
-                }
+                        events_dag.change_fields(&fc.fields);
+                    }
 
-                if self.vis.is_active() {
-                    if let Some(events_dag) = self.events_dag.as_ref() {
-                        self.vis.update_labels(events_dag.clone());
+                    if self.vis.is_active() {
+                        if let Some(events_dag) = view.get_events_dag() {
+                            self.vis.update_labels(events_dag.clone(), view.get_id());
+                        }
                     }
                 }
             }
@@ -479,15 +631,17 @@ impl Model {
                     fc.fields.remove(&Field::PrevEvents);
                 }
 
-                if let Some(events_dag) = self.events_dag.as_ref() {
-                    let mut events_dag = events_dag.write().unwrap();
+                for view in &self.views {
+                    if let Some(events_dag) = view.get_events_dag() {
+                        let mut events_dag = events_dag.write().unwrap();
 
-                    events_dag.change_fields(&fc.fields);
-                }
+                        events_dag.change_fields(&fc.fields);
+                    }
 
-                if self.vis.is_active() {
-                    if let Some(events_dag) = self.events_dag.as_ref() {
-                        self.vis.update_labels(events_dag.clone());
+                    if self.vis.is_active() {
+                        if let Some(events_dag) = view.get_events_dag() {
+                            self.vis.update_labels(events_dag.clone(), view.get_id());
+                        }
                     }
                 }
             }
@@ -502,15 +656,17 @@ impl Model {
                     fc.fields.remove(&Field::Depth);
                 }
 
-                if let Some(events_dag) = self.events_dag.as_ref() {
-                    let mut events_dag = events_dag.write().unwrap();
+                for view in &self.views {
+                    if let Some(events_dag) = view.get_events_dag() {
+                        let mut events_dag = events_dag.write().unwrap();
 
-                    events_dag.change_fields(&fc.fields);
-                }
+                        events_dag.change_fields(&fc.fields);
+                    }
 
-                if self.vis.is_active() {
-                    if let Some(events_dag) = self.events_dag.as_ref() {
-                        self.vis.update_labels(events_dag.clone());
+                    if self.vis.is_active() {
+                        if let Some(events_dag) = view.get_events_dag() {
+                            self.vis.update_labels(events_dag.clone(), view.get_id());
+                        }
                     }
                 }
             }
@@ -525,15 +681,17 @@ impl Model {
                     fc.fields.remove(&Field::Redacts);
                 }
 
-                if let Some(events_dag) = self.events_dag.as_ref() {
-                    let mut events_dag = events_dag.write().unwrap();
+                for view in &self.views {
+                    if let Some(events_dag) = view.get_events_dag() {
+                        let mut events_dag = events_dag.write().unwrap();
 
-                    events_dag.change_fields(&fc.fields);
-                }
+                        events_dag.change_fields(&fc.fields);
+                    }
 
-                if self.vis.is_active() {
-                    if let Some(events_dag) = self.events_dag.as_ref() {
-                        self.vis.update_labels(events_dag.clone());
+                    if self.vis.is_active() {
+                        if let Some(events_dag) = view.get_events_dag() {
+                            self.vis.update_labels(events_dag.clone(), view.get_id());
+                        }
                     }
                 }
             }
@@ -548,15 +706,17 @@ impl Model {
                     fc.fields.remove(&Field::EventID);
                 }
 
-                if let Some(events_dag) = self.events_dag.as_ref() {
-                    let mut events_dag = events_dag.write().unwrap();
+                for view in &self.views {
+                    if let Some(events_dag) = view.get_events_dag() {
+                        let mut events_dag = events_dag.write().unwrap();
 
-                    events_dag.change_fields(&fc.fields);
-                }
+                        events_dag.change_fields(&fc.fields);
+                    }
 
-                if self.vis.is_active() {
-                    if let Some(events_dag) = self.events_dag.as_ref() {
-                        self.vis.update_labels(events_dag.clone());
+                    if self.vis.is_active() {
+                        if let Some(events_dag) = view.get_events_dag() {
+                            self.vis.update_labels(events_dag.clone(), view.get_id());
+                        }
                     }
                 }
             }
@@ -574,7 +734,7 @@ impl Model {
                     .unwrap();
                 let event_id = input.raw_value();
 
-                if let Some(dag) = &self.events_dag {
+                if let Some(dag) = self.views[self.view_idx].get_events_dag() {
                     self.event_body = dag
                         .read()
                         .unwrap()
@@ -587,136 +747,151 @@ impl Model {
 
     fn process_bk_command(&mut self, cmd: BkCommand) {
         let console_msg = match cmd {
-            BkCommand::Connect => "Connecting...",
-            BkCommand::ListRooms => "Listing joined rooms...",
-            BkCommand::JoinRoom => "Joining the room...",
-            BkCommand::Sync => "Syncing...",
+            BkCommand::Connect(_) => "Connecting...",
+            BkCommand::ListRooms(_) => "Listing joined rooms...",
+            BkCommand::JoinRoom(_) => "Joining the room...",
+            BkCommand::Sync(_) => "Syncing...",
             BkCommand::MoreMsg => "Retrieving previous messages...",
-            BkCommand::LeaveRoom => "Leaving the room...",
-            BkCommand::Disconnect => "Disconnecting...",
+            BkCommand::LeaveRoom(_) => "Leaving the room...",
+            BkCommand::Disconnect(_) => "Disconnecting...",
         };
 
         self.console.log(console_msg);
 
         // Order the backend to make requests to the homeserver according to the command received
         match cmd {
-            BkCommand::Connect => match *self.bk_type.read().unwrap() {
-                BackendChoice::CS => match self.cs_session.read().unwrap().access_token {
-                    None => match self.connection_task {
+            BkCommand::Connect(view_id) => match &mut self.views[view_id] {
+                View::CS(view) => match view.session.read().unwrap().access_token {
+                    None => match view.connection_task {
                         None => {
-                            self.connection_task =
-                                Some(self.cs_backend.connect(self.connection_callback.clone()))
+                            view.connection_task =
+                                Some(view.backend.connect(view.connection_callback.clone()))
                         }
                         Some(_) => self.console.log("Already connecting"),
                     },
                     Some(_) => self.console.log("You are already connected"),
                 },
-                BackendChoice::Postgres => match self.events_dag {
-                    None => match self.deepest_task {
+                View::Postgres(view) => match view.events_dag {
+                    None => match view.deepest_task {
                         None => {
-                            self.deepest_task =
-                                Some(self.pg_backend.deepest(self.deepest_callback.clone()))
+                            view.deepest_task =
+                                Some(view.backend.deepest(view.deepest_callback.clone()))
                         }
                         Some(_) => self.console.log("Already fetching deepest events"),
                     },
                     Some(_) => self.console.log("Deepest events already fetched"),
                 },
             },
-            BkCommand::ListRooms => {
-                self.listing_rooms_task = Some(
-                    self.cs_backend
-                        .list_rooms(self.listing_rooms_callback.clone()),
-                )
+            BkCommand::ListRooms(view_id) => {
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.listing_rooms_task =
+                        Some(view.backend.list_rooms(view.listing_rooms_callback.clone()))
+                }
             }
-            BkCommand::JoinRoom => {
-                self.joining_room_task = Some(
-                    self.cs_backend
-                        .join_room(self.joining_room_callback.clone()),
-                )
+            BkCommand::JoinRoom(view_id) => {
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.joining_room_task =
+                        Some(view.backend.join_room(view.joining_room_callback.clone()))
+                }
             }
-            BkCommand::Sync => match *self.bk_type.read().unwrap() {
-                BackendChoice::CS => {
-                    let next_batch_token = self.cs_session.read().unwrap().next_batch_token.clone();
+            BkCommand::Sync(view_id) => match &mut self.views[view_id] {
+                View::CS(view) => {
+                    let next_batch_token = view.session.read().unwrap().next_batch_token.clone();
 
-                    self.sync_task = Some(
-                        self.cs_backend
-                            .sync(self.sync_callback.clone(), next_batch_token),
+                    view.sync_task = Some(
+                        view.backend
+                            .sync(view.sync_callback.clone(), next_batch_token),
                     )
                 }
-                BackendChoice::Postgres => {
-                    if let Some(dag) = &self.events_dag {
+                View::Postgres(view) => {
+                    if let Some(dag) = &view.events_dag {
                         let from = &dag.read().unwrap().latest_events;
 
-                        self.descendants_task = Some(
-                            self.pg_backend
-                                .descendants(self.descendants_callback.clone(), from),
+                        view.descendants_task = Some(
+                            view.backend
+                                .descendants(view.descendants_callback.clone(), from),
                         );
                     }
                 }
             },
-            BkCommand::MoreMsg => match *self.bk_type.read().unwrap() {
-                BackendChoice::CS => match self.more_msg_task {
-                    None => {
-                        self.more_msg_task = Some(
-                            self.cs_backend
-                                .get_prev_messages(self.more_msg_callback.clone()),
-                        );
-                    }
-                    Some(_) => self.console.log("Already fetching previous messages"),
-                },
-                BackendChoice::Postgres => match self.ancestors_task {
-                    None => match &self.events_dag {
-                        Some(dag) => {
-                            let input: web::html_element::InputElement = web::document()
-                                .query_selector("#ancestors-id")
-                                .expect("Couldn't get document element")
-                                .expect("Couldn't get document element")
-                                .try_into()
-                                .unwrap();
-                            let from = vec![input.raw_value()];
+            BkCommand::MoreMsg => {
+                let view_selection_input: web::html_element::InputElement = web::document()
+                    .query_selector("#targeted-view")
+                    .expect("Couldn't get document element")
+                    .expect("Couldn't get document element")
+                    .try_into()
+                    .unwrap();
+                let view_id: usize = view_selection_input
+                    .raw_value()
+                    .parse()
+                    .expect("Failed to parse view_id");
 
-                            self.ancestors_task = Some(
-                                self.pg_backend
-                                    .ancestors(self.ancestors_callback.clone(), &from),
+                match &mut self.views[view_id] {
+                    View::CS(view) => match view.more_msg_task {
+                        None => {
+                            view.more_msg_task = Some(
+                                view.backend
+                                    .get_prev_messages(view.more_msg_callback.clone()),
                             );
                         }
-                        None => self.console.log("There was no DAG"),
+                        Some(_) => self.console.log("Already fetching previous messages"),
                     },
-                    Some(_) => self.console.log("Already fetching ancestors"),
-                },
-            },
-            BkCommand::LeaveRoom => match self.leaving_room_task {
-                None => {
-                    self.leaving_room_task = Some(
-                        self.cs_backend
-                            .leave_room(self.leaving_room_callback.clone()),
-                    )
+                    View::Postgres(view) => match view.ancestors_task {
+                        None => match &view.events_dag {
+                            Some(_) => {
+                                let input: web::html_element::InputElement = web::document()
+                                    .query_selector("#ancestors-id")
+                                    .expect("Couldn't get document element")
+                                    .expect("Couldn't get document element")
+                                    .try_into()
+                                    .unwrap();
+                                let from = vec![input.raw_value()];
+
+                                view.ancestors_task = Some(
+                                    view.backend
+                                        .ancestors(view.ancestors_callback.clone(), &from),
+                                );
+                            }
+                            None => self.console.log("There was no DAG"),
+                        },
+                        Some(_) => self.console.log("Already fetching ancestors"),
+                    },
                 }
-                Some(_) => self.console.log("Already leaving the room"),
-            },
-            BkCommand::Disconnect => match *self.bk_type.read().unwrap() {
-                BackendChoice::CS => match self.cs_session.read().unwrap().access_token {
+            }
+            BkCommand::LeaveRoom(view_id) => {
+                if let View::CS(view) = &mut self.views[view_id] {
+                    match view.leaving_room_task {
+                        None => {
+                            view.leaving_room_task =
+                                Some(view.backend.leave_room(view.leaving_room_callback.clone()))
+                        }
+                        Some(_) => self.console.log("Already leaving the room"),
+                    }
+                }
+            }
+            BkCommand::Disconnect(view_id) => match &mut self.views[view_id] {
+                View::CS(view) => match view.session.read().unwrap().access_token {
                     None => {
                         self.console.log("You were not connected");
                     }
-                    Some(_) => match self.disconnection_task {
+                    Some(_) => match view.disconnection_task {
                         None => {
-                            self.disconnection_task = Some(
-                                self.cs_backend
-                                    .disconnect(self.disconnection_callback.clone()),
-                            )
+                            view.disconnection_task =
+                                Some(view.backend.disconnect(view.disconnection_callback.clone()))
                         }
                         Some(_) => self.console.log("Already disconnecting"),
                     },
                 },
-                BackendChoice::Postgres => {
-                    let mut session = self.pg_session.write().unwrap();
+                View::Postgres(view) => {
+                    let mut session = view.session.write().unwrap();
 
                     if session.connected {
                         self.console.log("Stopping the reception of new events");
 
                         session.connected = false;
-                        self.descendants_timeout_task = None;
+                        view.descendants_timeout_task = None;
+                        view.events_dag = None;
+                        self.vis.remove_dag(view_id);
                     } else {
                         self.console.log("You were not connected");
                     }
@@ -727,87 +902,254 @@ impl Model {
 
     fn process_bk_response(&mut self, res: BkResponse) {
         match res {
-            BkResponse::Connected(res) => {
-                self.connection_task = None;
+            BkResponse::Connected(view_id, res) => {
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.connection_task = None;
 
-                let mut session = self.cs_session.write().unwrap();
+                    let mut session = view.session.write().unwrap();
 
-                // Save the informations given by the homeserver when connecting to it. The access
-                // token will be used for authenticating subsequent requests.
-                session.user_id = res.user_id;
-                session.access_token = Some(res.access_token);
-                session.device_id = Some(res.device_id);
+                    // Save the informations given by the homeserver when connecting to it. The access
+                    // token will be used for authenticating subsequent requests.
+                    session.user_id = res.user_id;
+                    session.access_token = Some(res.access_token);
+                    session.device_id = Some(res.device_id);
 
-                self.console.log(&format!(
-                    "Connected with token: {} and as {}",
-                    session.access_token.as_ref().unwrap(),
-                    session.device_id.as_ref().unwrap()
-                ));
+                    self.console.log(&format!(
+                        "Connected with token: {} and as {}",
+                        session.access_token.as_ref().unwrap(),
+                        session.device_id.as_ref().unwrap()
+                    ));
 
-                // Request the list of the rooms joined by the user as soon as we are connected
-                self.link
-                    .send_back(|_: ()| Msg::BkCmd(BkCommand::ListRooms))
-                    .emit(());
-            }
-            BkResponse::RoomsList(res) => {
-                self.console.log("Looking up in joined rooms");
-
-                self.listing_rooms_task = None;
-
-                if res
-                    .joined_rooms
-                    .contains(&self.cs_session.read().unwrap().room_id)
-                {
-                    // If the user is already in the room to observe, make the initial sync
+                    // Request the list of the rooms joined by the user as soon as we are connected
                     self.link
-                        .send_back(|_: ()| Msg::BkCmd(BkCommand::Sync))
-                        .emit(());
-                } else {
-                    // Join the room if the user is not already in it
-                    self.link
-                        .send_back(|_: ()| Msg::BkCmd(BkCommand::JoinRoom))
+                        .send_back(move |_: ()| Msg::BkCmd(BkCommand::ListRooms(view_id)))
                         .emit(());
                 }
             }
-            BkResponse::RoomJoined => {
+            BkResponse::RoomsList(view_id, res) => {
+                self.console.log("Looking up in joined rooms");
+
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.listing_rooms_task = None;
+
+                    if res
+                        .joined_rooms
+                        .contains(&view.session.read().unwrap().room_id)
+                    {
+                        // If the user is already in the room to observe, make the initial sync
+                        self.link
+                            .send_back(move |_: ()| Msg::BkCmd(BkCommand::Sync(view_id)))
+                            .emit(());
+                    } else {
+                        // Join the room if the user is not already in it
+                        self.link
+                            .send_back(move |_: ()| Msg::BkCmd(BkCommand::JoinRoom(view_id)))
+                            .emit(());
+                    }
+                }
+            }
+            BkResponse::RoomJoined(view_id) => {
                 self.console.log("Room joined!");
 
-                self.joining_room_task = None;
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.joining_room_task = None;
 
-                // Make the initial sync as soon as the user has joined the room
-                self.link
-                    .send_back(|_: ()| Msg::BkCmd(BkCommand::Sync))
-                    .emit(());
+                    // Make the initial sync as soon as the user has joined the room
+                    self.link
+                        .send_back(move |_: ()| Msg::BkCmd(BkCommand::Sync(view_id)))
+                        .emit(());
+                }
             }
-            BkResponse::Synced(res) => {
-                self.sync_task = None;
+            BkResponse::Synced(view_id, res) => {
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.sync_task = None;
 
-                let mut session = self.cs_session.write().unwrap();
-                let next_batch_token = res.next_batch.clone(); // Save the next batch token to get new events later
+                    let mut session = view.session.write().unwrap();
+                    let next_batch_token = res.next_batch.clone(); // Save the next batch token to get new events later
 
-                match session.next_batch_token {
-                    None => {
-                        // Initialise the prev batch token on the initial sync
-                        if let Some(room) = res.rooms.join.get(&session.room_id) {
-                            session.prev_batch_token = room.timeline.prev_batch.clone();
+                    match session.next_batch_token {
+                        None => {
+                            // Initialise the prev batch token on the initial sync
+                            if let Some(room) = res.rooms.join.get(&session.room_id) {
+                                session.prev_batch_token = room.timeline.prev_batch.clone();
+                            }
+
+                            // Create a new DAG if it is the initial sync
+                            if let Some(dag) = model::dag::RoomEvents::from_sync_response(
+                                &session.room_id,
+                                &session.server_name,
+                                &self.fields_choice.fields,
+                                res,
+                            ) {
+                                view.events_dag = Some(Arc::new(RwLock::new(dag)));
+                            }
+
+                            match view.events_dag.clone() {
+                                Some(dag) => {
+                                    // Display the DAG with VisJs if it has been successfully built
+                                    if !self.vis.is_active() {
+                                        self.vis.init(
+                                            "#dag-vis",
+                                            "#targeted-view",
+                                            "#more-ev-target",
+                                            "#selected-event",
+                                            "#display-body-target",
+                                            "#ancestors-id",
+                                            "#ancestors-target",
+                                        );
+                                    }
+
+                                    self.vis.add_dag(dag, view_id);
+                                }
+                                None => self.console.log("Failed to build the DAG"),
+                            }
                         }
+                        Some(_) => match view.events_dag.clone() {
+                            // Add new events to the DAG
+                            Some(dag) => {
+                                if let Some(room) = res.rooms.join.get(&session.room_id) {
+                                    dag.write()
+                                        .unwrap()
+                                        .add_events(room.timeline.events.clone());
+                                    self.vis.update_dag(dag, view_id);
+                                }
+                            }
+                            None => self.console.log("There is no DAG"),
+                        },
+                    }
 
-                        // Create a new DAG if it is the initial sync
-                        if let Some(dag) = model::dag::RoomEvents::from_sync_response(
+                    session.next_batch_token = Some(next_batch_token);
+
+                    // Request for futur new events
+                    self.link
+                        .send_back(move |_: ()| Msg::BkCmd(BkCommand::Sync(view_id)))
+                        .emit(());
+                }
+            }
+            BkResponse::MsgGot(view_id, res) => {
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.more_msg_task = None;
+
+                    // Save the prev batch token for the next `/messages` request
+                    view.session.write().unwrap().prev_batch_token = Some(res.end);
+
+                    match view.events_dag.clone() {
+                        // Add earlier event to the DAG and display them
+                        Some(dag) => {
+                            dag.write().unwrap().add_events(res.chunk);
+
+                            self.vis.update_dag(dag, view_id);
+                        }
+                        None => self.console.log("There was no DAG"),
+                    }
+                }
+            }
+            BkResponse::RoomLeft(view_id) => {
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.leaving_room_task = None;
+
+                    self.console.log("Room left!");
+
+                    // Disconnect as soon as we leave the room
+                    self.link
+                        .send_back(move |_: ()| Msg::BkCmd(BkCommand::Disconnect(view_id)))
+                        .emit(());
+                }
+            }
+            BkResponse::Disconnected(view_id) => {
+                self.console.log("Disconnected");
+
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.sync_task = None; // If a `/sync` request was in progress, cancel it
+                    view.disconnection_task = None;
+
+                    let mut session = view.session.write().unwrap();
+
+                    // Erase the current session data so they won't be erroneously used if the user
+                    // logs in again
+                    session.access_token = None;
+                    session.device_id = None;
+                    session.filter_id = None;
+                    session.next_batch_token = None;
+                    session.prev_batch_token = None;
+
+                    view.events_dag = None;
+                    self.vis.remove_dag(view_id);
+                }
+            }
+
+            BkResponse::ConnectionFailed(view_id) => {
+                self.console.log("Connection failed");
+
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.connection_task = None;
+                }
+            }
+            BkResponse::ListingRoomsFailed(view_id) => {
+                self.console.log("Failed to get the list of joined rooms");
+
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.listing_rooms_task = None;
+                }
+            }
+            BkResponse::JoiningRoomFailed(view_id) => {
+                self.console.log("Failed to join the room");
+
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.joining_room_task = None;
+                }
+            }
+            BkResponse::SyncFailed(view_id) => {
+                self.console.log("Could not sync");
+
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.sync_task = None;
+                }
+            }
+            BkResponse::MoreMsgFailed(view_id) => {
+                self.console.log("Could not retrieve previous messages");
+
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.more_msg_task = None;
+                }
+            }
+            BkResponse::LeavingRoomFailed(view_id) => {
+                self.console.log("Failed to leave the room");
+
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.leaving_room_task = None;
+                }
+            }
+            BkResponse::DisconnectionFailed(view_id) => {
+                self.console.log("Could not disconnect");
+
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.disconnection_task = None;
+                }
+            }
+
+            BkResponse::DeepestEvents(view_id, res) => {
+                if let View::Postgres(view) = &mut self.views[view_id] {
+                    view.deepest_task = None;
+
+                    let mut session = view.session.write().unwrap();
+                    session.connected = true;
+
+                    view.events_dag = Some(Arc::new(RwLock::new(
+                        model::dag::RoomEvents::from_deepest_events(
                             &session.room_id,
                             &session.server_name,
                             &self.fields_choice.fields,
                             res,
-                        ) {
-                            self.events_dag = Some(Arc::new(RwLock::new(dag)));
-                        }
+                        ),
+                    )));
 
-                        match self.events_dag.clone() {
-                            Some(dag) => {
-                                // Display the DAG with VisJs if it has been successfully built
-                                self.vis.display_dag(
-                                    dag,
+                    match view.events_dag.clone() {
+                        Some(dag) => {
+                            if !self.vis.is_active() {
+                                self.vis.init(
                                     "#dag-vis",
+                                    "#targeted-view",
                                     "#more-ev-target",
                                     "#selected-event",
                                     "#display-body-target",
@@ -815,195 +1157,82 @@ impl Model {
                                     "#ancestors-target",
                                 );
                             }
-                            None => self.console.log("Failed to build the DAG"),
+
+                            self.vis.add_dag(dag, view_id);
                         }
+                        None => self.console.log("Failed to build the DAG"),
                     }
-                    Some(_) => match self.events_dag.clone() {
-                        // Add new events to the DAG
+
+                    view.descendants_timeout_task = Some(
+                        self.timeout.spawn(
+                            std::time::Duration::new(5, 0),
+                            self.link
+                                .send_back(move |_: ()| Msg::BkCmd(BkCommand::Sync(view_id))),
+                        ),
+                    );
+                }
+            }
+            BkResponse::Ancestors(view_id, res) => {
+                if let View::Postgres(view) = &mut self.views[view_id] {
+                    view.ancestors_task = None;
+
+                    match view.events_dag.clone() {
+                        // Add ancestors to the DAG and display them
                         Some(dag) => {
-                            if let Some(room) = res.rooms.join.get(&session.room_id) {
-                                dag.write()
-                                    .unwrap()
-                                    .add_events(room.timeline.events.clone());
-                                self.vis.update_dag(dag);
+                            dag.write().unwrap().add_events(res.events);
+
+                            self.vis.update_dag(dag, view_id);
+                        }
+                        None => self.console.log("There was no DAG"),
+                    }
+                }
+            }
+            BkResponse::Descendants(view_id, res) => {
+                if let View::Postgres(view) = &mut self.views[view_id] {
+                    view.descendants_task = None;
+
+                    match view.events_dag.clone() {
+                        Some(dag) => {
+                            dag.write().unwrap().add_events(res.events);
+
+                            self.vis.update_dag(dag, view_id);
+
+                            if view.session.read().unwrap().connected {
+                                view.descendants_timeout_task = Some(self.timeout.spawn(
+                                    std::time::Duration::new(5, 0),
+                                    self.link.send_back(move |_: ()| {
+                                        Msg::BkCmd(BkCommand::Sync(view_id))
+                                    }),
+                                ));
                             }
                         }
-                        None => self.console.log("There is no DAG"),
-                    },
-                }
-
-                session.next_batch_token = Some(next_batch_token);
-
-                // Request for futur new events
-                self.link
-                    .send_back(|_: ()| Msg::BkCmd(BkCommand::Sync))
-                    .emit(());
-            }
-            BkResponse::MsgGot(res) => {
-                self.more_msg_task = None;
-
-                // Save the prev batch token for the next `/messages` request
-                self.cs_session.write().unwrap().prev_batch_token = Some(res.end);
-
-                match self.events_dag.clone() {
-                    // Add earlier event to the DAG and display them
-                    Some(dag) => {
-                        dag.write().unwrap().add_events(res.chunk);
-
-                        self.vis.update_dag(dag);
+                        None => self.console.log("There was no DAG"),
                     }
-                    None => self.console.log("There was no DAG"),
-                }
-            }
-            BkResponse::RoomLeft => {
-                self.leaving_room_task = None;
-
-                self.console.log("Room left!");
-
-                // Disconnect as soon as we leave the room
-                self.link
-                    .send_back(|_: ()| Msg::BkCmd(BkCommand::Disconnect))
-                    .emit(());
-            }
-            BkResponse::Disconnected => {
-                self.console.log("Disconnected");
-
-                self.sync_task = None; // If a `/sync` request was in progress, cancel it
-                self.disconnection_task = None;
-
-                let mut session = self.cs_session.write().unwrap();
-
-                // Erase the current session data so they won't be erroneously used if the user
-                // logs in again
-                session.access_token = None;
-                session.device_id = None;
-                session.filter_id = None;
-                session.next_batch_token = None;
-                session.prev_batch_token = None;
-
-                self.events_dag = None;
-            }
-
-            BkResponse::ConnectionFailed => {
-                self.console.log("Connection failed");
-
-                self.connection_task = None;
-            }
-            BkResponse::ListingRoomsFailed => {
-                self.console.log("Failed to get the list of joined rooms");
-
-                self.listing_rooms_task = None;
-            }
-            BkResponse::JoiningRoomFailed => {
-                self.console.log("Failed to join the room");
-
-                self.joining_room_task = None;
-            }
-            BkResponse::SyncFailed => {
-                self.console.log("Could not sync");
-
-                self.sync_task = None;
-            }
-            BkResponse::MoreMsgFailed => {
-                self.console.log("Could not retrieve previous messages");
-
-                self.more_msg_task = None;
-            }
-            BkResponse::LeavingRoomFailed => {
-                self.console.log("Failed to leave the room");
-
-                self.leaving_room_task = None;
-            }
-            BkResponse::DisconnectionFailed => {
-                self.console.log("Could not disconnect");
-
-                self.disconnection_task = None;
-            }
-
-            BkResponse::DeepestEvents(res) => {
-                self.deepest_task = None;
-
-                let mut session = self.pg_session.write().unwrap();
-                session.connected = true;
-
-                self.events_dag = Some(Arc::new(RwLock::new(
-                    model::dag::RoomEvents::from_deepest_events(
-                        &session.room_id,
-                        &session.server_name,
-                        &self.fields_choice.fields,
-                        res,
-                    ),
-                )));
-
-                match self.events_dag.clone() {
-                    Some(dag) => {
-                        self.vis.display_dag(
-                            dag,
-                            "#dag-vis",
-                            "#more-ev-target",
-                            "#selected-event",
-                            "#display-body-target",
-                            "#ancestors-id",
-                            "#ancestors-target",
-                        );
-                    }
-                    None => self.console.log("Failed to build the DAG"),
-                }
-
-                self.descendants_timeout_task = Some(self.timeout.spawn(
-                    std::time::Duration::new(5, 0),
-                    self.link.send_back(|_: ()| Msg::BkCmd(BkCommand::Sync)),
-                ));
-            }
-            BkResponse::Ancestors(res) => {
-                self.ancestors_task = None;
-
-                match self.events_dag.clone() {
-                    // Add ancestors to the DAG and display them
-                    Some(dag) => {
-                        dag.write().unwrap().add_events(res.events);
-
-                        self.vis.update_dag(dag);
-                    }
-                    None => self.console.log("There was no DAG"),
-                }
-            }
-            BkResponse::Descendants(res) => {
-                self.descendants_task = None;
-
-                match self.events_dag.clone() {
-                    Some(dag) => {
-                        dag.write().unwrap().add_events(res.events);
-
-                        self.vis.update_dag(dag);
-
-                        if self.pg_session.read().unwrap().connected {
-                            self.descendants_timeout_task = Some(self.timeout.spawn(
-                                std::time::Duration::new(5, 0),
-                                self.link.send_back(|_: ()| Msg::BkCmd(BkCommand::Sync)),
-                            ));
-                        }
-                    }
-                    None => self.console.log("There was no DAG"),
                 }
             }
 
-            BkResponse::DeepestRqFailed => {
+            BkResponse::DeepestRqFailed(view_id) => {
                 self.console
                     .log("Could not retrieve the room's deepest events");
 
-                self.deepest_task = None;
+                if let View::Postgres(view) = &mut self.views[view_id] {
+                    view.deepest_task = None;
+                }
             }
-            BkResponse::AncestorsRqFailed => {
+            BkResponse::AncestorsRqFailed(view_id) => {
                 self.console.log("Could not retrieve the events' ancestors");
 
-                self.ancestors_task = None;
+                if let View::Postgres(view) = &mut self.views[view_id] {
+                    view.ancestors_task = None;
+                }
             }
-            BkResponse::DescendantsRqFailed => {
+            BkResponse::DescendantsRqFailed(view_id) => {
                 self.console
                     .log("Could not retrieve the events' descendants");
 
-                self.descendants_task = None;
+                if let View::Postgres(view) = &mut self.views[view_id] {
+                    view.descendants_task = None;
+                }
             }
         }
     }
@@ -1026,9 +1255,12 @@ impl Model {
     fn display_backend_choice(&self) -> Html<Self> {
         let bk_type = *self.bk_type.read().unwrap();
 
-        if (bk_type == BackendChoice::CS && self.cs_session.read().unwrap().access_token.is_none())
-            || (bk_type == BackendChoice::Postgres && !self.pg_session.read().unwrap().connected)
-        {
+        let connected = self.views.iter().any(|view| match view {
+            View::CS(view) => view.session.read().unwrap().access_token.is_some(),
+            View::Postgres(view) => view.session.read().unwrap().connected,
+        });
+
+        if !connected {
             html! {
                 <>
                     <input type="radio", id="cs-bk", name="bk-type", value="cs-bk", checked=(bk_type == BackendChoice::CS), onclick=|_| Msg::UI(UIEvent::ChooseCSBackend),/>
@@ -1044,23 +1276,36 @@ impl Model {
         }
     }
 
+    fn display_view_choice(&self) -> Html<Self> {
+        html! {
+            <>
+                <select id="view-select",>
+                    <option value="view-0", onclick=|_| Msg::UI(UIEvent::ViewChoice(0)),>{ "View 1" }</option>
+                    <option value="view-1", onclick=|_| Msg::UI(UIEvent::ViewChoice(1)),>{ "View 2" }</option>
+                </select>
+            </>
+        }
+    }
+
     fn display_interaction_list(&self) -> Html<Self> {
+        let view_id = self.view_idx;
+
         match *self.bk_type.read().unwrap() {
             BackendChoice::CS => {
                 html! {
                     <ul>
-                        <li>{ "Server name: " }<input type="text", onchange=|e| Msg::UI(UIEvent::ServerName(e)),/></li>
+                        <li>{ "Server name: " }<input type="text", id="server-name-input", onchange=|e| Msg::UI(UIEvent::ServerName(e)),/></li>
 
-                        <li>{ "Room ID: " }<input type="text", onchange=|e| Msg::UI(UIEvent::RoomId(e)),/></li>
+                        <li>{ "Room ID: " }<input type="text", id="room-id-input", onchange=|e| Msg::UI(UIEvent::RoomId(e)),/></li>
 
-                        <li>{ "Username: " }<input type="text", onchange=|e| Msg::UI(UIEvent::Username(e)),/></li>
+                        <li>{ "Username: " }<input type="text", id="username-input", onchange=|e| Msg::UI(UIEvent::Username(e)),/></li>
 
-                        <li>{ "Password: " }<input type="password", onchange=|e| Msg::UI(UIEvent::Password(e)),/></li>
+                        <li>{ "Password: " }<input type="password", id="password-input", onchange=|e| Msg::UI(UIEvent::Password(e)),/></li>
 
                         <li>
-                            <button onclick=|_| Msg::BkCmd(BkCommand::Connect),>{ "Connect" }</button>
-                            <button onclick=|_| Msg::BkCmd(BkCommand::Disconnect),>{ "Disconnect" }</button>
-                            <button onclick=|_| Msg::BkCmd(BkCommand::LeaveRoom),>{ "Leave room and disconnect" }</button>
+                            <button onclick=|_| Msg::BkCmd(BkCommand::Connect(view_id)),>{ "Connect" }</button>
+                            <button onclick=|_| Msg::BkCmd(BkCommand::Disconnect(view_id)),>{ "Disconnect" }</button>
+                            <button onclick=|_| Msg::BkCmd(BkCommand::LeaveRoom(view_id)),>{ "Leave room and disconnect" }</button>
                         </li>
                     </ul>
                 }
@@ -1068,13 +1313,13 @@ impl Model {
             BackendChoice::Postgres => {
                 html! {
                     <ul>
-                        <li>{ "Server name: " }<input type="text", onchange=|e| Msg::UI(UIEvent::ServerName(e)),/></li>
+                        <li>{ "Server name: " }<input type="text", id="server-name-input", onchange=|e| Msg::UI(UIEvent::ServerName(e)),/></li>
 
-                        <li>{ "Room ID: " }<input type="text", onchange=|e| Msg::UI(UIEvent::RoomId(e)),/></li>
+                        <li>{ "Room ID: " }<input type="text", id="room-id-input", onchange=|e| Msg::UI(UIEvent::RoomId(e)),/></li>
 
                         <li>
-                            <button onclick=|_| Msg::BkCmd(BkCommand::Connect),>{ "Start observation" }</button>
-                            <button onclick=|_| Msg::BkCmd(BkCommand::Disconnect),>{ "Stop observation" }</button>
+                            <button onclick=|_| Msg::BkCmd(BkCommand::Connect(view_id)),>{ "Start observation" }</button>
+                            <button onclick=|_| Msg::BkCmd(BkCommand::Disconnect(view_id)),>{ "Stop observation" }</button>
                         </li>
                     </ul>
                 }
@@ -1090,8 +1335,11 @@ impl Renderable<Model> for Model {
                 { self.display_backend_choice() }
             </section>
 
-            { self.display_interaction_list() }
+            <section class="view-choice",>
+                { self.display_view_choice() }
+            </section>
 
+            { self.display_interaction_list() }
 
             <section class="fields-choice",>
                 <p>{ "Event fields to show in the DAG:" }</p>
@@ -1145,6 +1393,8 @@ impl Renderable<Model> for Model {
             </section>
 
             <section class="to-hide",>
+                <input type="text", id="targeted-view",/>
+
                 <button id="more-ev-target", onclick=|_| Msg::BkCmd(BkCommand::MoreMsg),>{ "More events" }</button>
                 <input type="text", id="selected-event",/>
                 <button id="display-body-target", onclick=|_| Msg::UICmd(UICommand::DisplayEventBody),>{ "Display body" }</button>

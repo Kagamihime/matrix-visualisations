@@ -42,6 +42,20 @@ pub struct DataSet {
     edges: Vec<DataSetEdge>,
 }
 
+impl DataSet {
+    pub fn add_prefix(&mut self, pref: &str) {
+        for n in &mut self.nodes {
+            n.id.insert_str(0, pref);
+        }
+
+        for e in &mut self.edges {
+            e.id.insert_str(0, pref);
+            e.from.insert_str(0, pref);
+            e.to.insert_str(0, pref);
+        }
+    }
+}
+
 /// A node of the vis.js data set.
 #[derive(Debug, Serialize)]
 pub struct DataSetNode {
@@ -61,6 +75,7 @@ pub struct NodeColor {
 /// An edge of the vis.js data set.
 #[derive(Debug, Serialize)]
 pub struct DataSetEdge {
+    id: String,
     from: String,
     to: String,
 }
@@ -227,14 +242,19 @@ impl RoomEvents {
     }
 
     /// Creates a data set for creating a vis.js network.
-    pub fn create_data_set(&mut self) -> DataSet {
+    pub fn create_data_set(&self) -> DataSet {
         let server_name = self.server_name.clone();
         let fields = self.fields.clone();
 
         let nodes: Vec<DataSetNode> = self
-            .dag
-            .node_weights_mut()
-            .map(|w| w.to_data_set_node(&server_name, &fields))
+            .events_map
+            .values()
+            .map(|idx| {
+                self.dag
+                    .node_weight(*idx)
+                    .unwrap()
+                    .to_data_set_node(&server_name, &fields)
+            })
             .collect();
 
         let edges: Vec<DataSetEdge> = self
@@ -254,7 +274,11 @@ impl RoomEvents {
                     .event_id
                     .clone();
 
-                DataSetEdge { from, to }
+                DataSetEdge {
+                    id: from.clone() + &to,
+                    from,
+                    to,
+                }
             })
             .collect();
 
@@ -332,7 +356,11 @@ impl RoomEvents {
         let from = self.dag.node_weight(src)?.event_id.clone();
         let to = self.dag.node_weight(dst)?.event_id.clone();
 
-        Some(DataSetEdge { from, to })
+        Some(DataSetEdge {
+            id: from.clone() + &to,
+            from,
+            to,
+        })
     }
 }
 
