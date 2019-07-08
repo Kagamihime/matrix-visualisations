@@ -112,6 +112,7 @@ impl VisJsService {
                         enabled: true,
                         levelSeparation: 250,
                         nodeSpacing: 500,
+                        treeSpacing: 300,
                         sortMethod: "directed"
                     }
                 },
