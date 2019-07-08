@@ -399,9 +399,10 @@ impl VisJsService {
     pub fn update_labels(&mut self, events_dag: Arc<RwLock<RoomEvents>>, view_id: usize) {
         self.update_dag(events_dag.clone(), view_id);
 
-        let events_dag = events_dag.read().unwrap();
-        let new_data = events_dag.create_data_set();
         let data = self.data.as_ref().expect("No data set found");
+        let events_dag = events_dag.read().unwrap();
+        let mut new_data = events_dag.create_data_set();
+        new_data.add_prefix(&format!("subdag_{}_", view_id));
 
         self.data = Some(js! {
             var data = @{data};
