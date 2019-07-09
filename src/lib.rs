@@ -261,6 +261,7 @@ pub enum UIEvent {
     ChooseCSBackend,
     ChoosePostgresBackend,
     ViewChoice(usize),
+    AddView,
     ServerName(html::ChangeData),
     RoomId(html::ChangeData),
 
@@ -326,10 +327,7 @@ impl Component for Model {
 
     fn create(_: Self::Properties, mut link: ComponentLink<Self>) -> Self {
         let bk_type = Arc::new(RwLock::new(BackendChoice::CS));
-        let default_views = vec![
-            View::CS(CSView::new(0, &mut link)),
-            View::CS(CSView::new(1, &mut link)),
-        ];
+        let default_view = vec![View::CS(CSView::new(0, &mut link))];
 
         let default_fields_choice = FieldsChoice {
             sender: false,
@@ -354,7 +352,7 @@ impl Component for Model {
 
             bk_type: bk_type,
             view_idx: 0,
-            views: default_views,
+            views: default_view,
             event_body: None,
             fields_choice: default_fields_choice,
         }
@@ -458,6 +456,18 @@ impl Model {
                 }
 
                 self.view_idx = vc;
+            }
+            UIEvent::AddView => {
+                let view = match *self.bk_type.read().unwrap() {
+                    BackendChoice::CS => View::CS(CSView::new(self.views.len(), &mut self.link)),
+                    BackendChoice::Postgres => {
+                        View::Postgres(PgView::new(self.views.len(), &mut self.link))
+                    }
+                };
+
+                self.views.push(view);
+
+                self.console.log("View added");
             }
             UIEvent::ServerName(sn) => {
                 if let html::ChangeData::Value(sn) = sn {
@@ -1288,12 +1298,19 @@ impl Model {
     }
 
     fn display_view_choice(&self) -> Html<Self> {
+        let entry = |id| {
+            html! {
+                <option value=format!("view-{}", id), onclick=|_| Msg::UI(UIEvent::ViewChoice(id)),>{ format!("View {}", id + 1) }</option>
+            }
+        };
+
         html! {
             <>
                 <select id="view-select",>
-                    <option value="view-0", onclick=|_| Msg::UI(UIEvent::ViewChoice(0)),>{ "View 1" }</option>
-                    <option value="view-1", onclick=|_| Msg::UI(UIEvent::ViewChoice(1)),>{ "View 2" }</option>
+                    { for (0..self.views.len()).map(entry) }
                 </select>
+
+                <button onclick=|_| Msg::UI(UIEvent::AddView),>{ "Add a view" }</button>
             </>
         }
     }
