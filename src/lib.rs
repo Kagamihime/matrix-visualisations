@@ -726,15 +726,26 @@ impl Model {
     fn process_ui_command(&mut self, cmd: UICommand) {
         match cmd {
             UICommand::DisplayEventBody => {
-                let input: web::html_element::InputElement = web::document()
+                let view_selection_input: web::html_element::InputElement = web::document()
+                    .query_selector("#targeted-view")
+                    .expect("Couldn't get document element")
+                    .expect("Couldn't get document element")
+                    .try_into()
+                    .unwrap();
+                let view_id: usize = view_selection_input
+                    .raw_value()
+                    .parse()
+                    .expect("Failed to parse view_id");
+
+                let event_id_input: web::html_element::InputElement = web::document()
                     .query_selector("#selected-event")
                     .expect("Couldn't get document element")
                     .expect("Couldn't get document element")
                     .try_into()
                     .unwrap();
-                let event_id = input.raw_value();
+                let event_id = event_id_input.raw_value();
 
-                if let Some(dag) = self.views[self.view_idx].get_events_dag() {
+                if let Some(dag) = self.views[view_id].get_events_dag() {
                     self.event_body = dag
                         .read()
                         .unwrap()
