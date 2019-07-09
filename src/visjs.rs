@@ -36,9 +36,9 @@ impl VisJsService {
             network: None,
             bk_type,
             data: None,
-            earliest_events: vec![Vec::new(); 2],
-            latest_events: vec![Vec::new(); 2],
-            orphan_events: vec![Vec::new(); 2],
+            earliest_events: Vec::new(),
+            latest_events: Vec::new(),
+            orphan_events: Vec::new(),
         }
     }
 
@@ -193,6 +193,16 @@ impl VisJsService {
         let data = self.data.as_ref().expect("No data set found");
         let mut events = events_dag.create_data_set();
         events.add_prefix(&format!("subdag_{}_", view_id));
+
+        while self.earliest_events.len() <= view_id {
+            self.earliest_events.push(Vec::new());
+        }
+        while self.latest_events.len() <= view_id {
+            self.latest_events.push(Vec::new());
+        }
+        while self.orphan_events.len() <= view_id {
+            self.orphan_events.push(Vec::new());
+        }
 
         self.earliest_events[view_id] = events_dag.earliest_events.clone();
         self.latest_events[view_id] = events_dag.latest_events.clone();
