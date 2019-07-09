@@ -150,7 +150,7 @@ impl VisJsService {
 
                 if (id.includes("_more_of_")) {
                     let split_id = id.split("_");
-                    let targeted_view_input = @{targeted_view_input};
+                    let targeted_view_input = @{targeted_view_input.clone()};
                     let id_input = @{ancestors_input};
 
                     let pref_patt = new RegExp("subdag_[0-9]+_more_of_");
@@ -164,10 +164,20 @@ impl VisJsService {
             network.on("selectNode", select_node);
 
             function display_json_body(ev) {
-                let id_input = @{selected_event_input};
+                let id = ev.nodes[0];
+                let split_id = id.split("_");
 
-                id_input.value = ev.nodes[0];
-                @{display_body_btn}.click();
+                // Only display body if the node matches with an actual event
+                if (split_id[2].startsWith("$")) {
+                    let targeted_view_input = @{targeted_view_input};
+                    let id_input = @{selected_event_input};
+
+                    let pref_patt = new RegExp("subdag_[0-9]+_");
+
+                    targeted_view_input.value = split_id[1];
+                    id_input.value = id.replace(pref_patt, "");
+                    @{display_body_btn}.click();
+                }
             }
 
             network.on("doubleClick", display_json_body);
