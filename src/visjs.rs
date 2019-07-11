@@ -10,6 +10,15 @@ use crate::model::dag::{DataSet, OrphanInfo};
 use crate::BackendChoice;
 use crate::View;
 
+/// This struct contains the DAG displayed by the application.
+///
+/// `data` contains every nodes of every views of the DAG, so they are displayed side-by-side
+/// within the same vis.js network. Each node stored there has a prefix of the form "subdag_X_"
+/// which means that this node belongs to the view X.
+///
+/// Each of `earliest_events`, `latest_events` and `orphan_events` variables contains a list of
+/// lists of the earliest/latest/orphan events' IDs currently displayed for each views. So
+/// `*_events[X]` corresponds with the view X.
 pub struct VisJsService {
     lib: Option<Value>,
     network: Option<Value>,
@@ -20,6 +29,8 @@ pub struct VisJsService {
     orphan_events: Vec<Vec<OrphanInfo>>,
 }
 
+// This enables the serialization of the ID of a view, so it can be used within the `js!`
+// macro.
 #[derive(Clone, Copy, Serialize)]
 struct ViewId {
     id: usize,
@@ -42,6 +53,8 @@ impl VisJsService {
         }
     }
 
+    /// Creates and initialises the vis.js network as well as its parameters and callback
+    /// functions for interacting with it.
     pub fn init(
         &mut self,
         container_id: &str,
@@ -186,6 +199,7 @@ impl VisJsService {
         });
     }
 
+    /// Adds a new `events_dag` for the view `view_id`.
     pub fn add_dag(&mut self, events_dag: Arc<RwLock<RoomEvents>>, view_id: usize) {
         let backend = *self.bk_type.read().unwrap();
         let events_dag = events_dag.read().unwrap();
@@ -274,6 +288,7 @@ impl VisJsService {
         }
     }
 
+    /// Removes the DAG of the view `view_id`.
     pub fn remove_dag(&mut self, view_id: usize) {
         let data = self.data.as_ref().expect("No data set found");
 
@@ -303,6 +318,8 @@ impl VisJsService {
         });
     }
 
+    /// Updates the DAG of the view `view_id` so that each additional events in `events_dag`
+    /// is added to the vis.js network.
     pub fn update_dag(&mut self, events_dag: Arc<RwLock<RoomEvents>>, view_id: usize) {
         let events_dag = events_dag.read().unwrap();
         let backend = *self.bk_type.read().unwrap();
@@ -417,6 +434,8 @@ impl VisJsService {
         }
     }
 
+    /// Updates the labels of the nodes corresponding to the events in `events_dag` in the view
+    /// `view_id`.
     pub fn update_labels(&mut self, events_dag: Arc<RwLock<RoomEvents>>, view_id: usize) {
         self.update_dag(events_dag.clone(), view_id);
 

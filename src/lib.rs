@@ -70,6 +70,8 @@ impl View {
     }
 }
 
+// This contains every informations needed for the observation of a room from a given HS by using
+// the CS API.
 pub struct CSView {
     id: usize,
 
@@ -172,6 +174,8 @@ impl CSView {
     }
 }
 
+// This contains every informations needed for the observation of a room from a given HS by using
+// the PostgreSQL backend.
 pub struct PgView {
     id: usize,
 
@@ -229,12 +233,14 @@ impl PgView {
     }
 }
 
+// This defines which backend is used by the application for the retrieval of the events DAG.
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum BackendChoice {
     CS,
     Postgres,
 }
 
+// This defines which fields of the event body will be displayed in the nodes of the displayed DAG.
 struct FieldsChoice {
     sender: bool,
     origin: bool,
