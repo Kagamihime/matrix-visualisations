@@ -43,6 +43,8 @@ pub struct DataSet {
 }
 
 impl DataSet {
+    /// Adds a prefix `pref` to the events in the `DataSet` so that they can be associated with
+    /// a certain view identified in `pref`.
     pub fn add_prefix(&mut self, pref: &str) {
         for n in &mut self.nodes {
             n.id.insert_str(0, pref);
