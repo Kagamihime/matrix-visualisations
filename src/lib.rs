@@ -36,6 +36,8 @@ use pg_backend::backend::{EventsResponse, PostgresBackend};
 use pg_backend::session::Session as PgSession;
 use visjs::VisJsService;
 
+pub type ViewIndex = usize;
+
 pub struct Model {
     console: ConsoleService,
     timeout: TimeoutService,
@@ -43,7 +45,7 @@ pub struct Model {
     link: ComponentLink<Self>,
 
     bk_type: Arc<RwLock<BackendChoice>>,
-    view_idx: usize,
+    view_idx: ViewIndex,
     views: Vec<View>,
     event_body: Option<String>,
     fields_choice: FieldsChoice,
@@ -55,7 +57,7 @@ pub enum View {
 }
 
 impl View {
-    pub fn get_id(&self) -> usize {
+    pub fn get_id(&self) -> ViewIndex {
         match self {
             View::CS(v) => v.id,
             View::Postgres(v) => v.id,
@@ -73,7 +75,7 @@ impl View {
 // This contains every informations needed for the observation of a room from a given HS by using
 // the CS API.
 pub struct CSView {
-    id: usize,
+    id: ViewIndex,
 
     connection_callback: Callback<Result<ConnectionResponse, Error>>,
     connection_task: Option<FetchTask>,
@@ -102,7 +104,7 @@ pub struct CSView {
 }
 
 impl CSView {
-    pub fn new(id: usize, link: &mut ComponentLink<Model>) -> CSView {
+    pub fn new(id: ViewIndex, link: &mut ComponentLink<Model>) -> CSView {
         let session = Arc::new(RwLock::new(CSSession::empty()));
 
         CSView {
@@ -177,7 +179,7 @@ impl CSView {
 // This contains every informations needed for the observation of a room from a given HS by using
 // the PostgreSQL backend.
 pub struct PgView {
-    id: usize,
+    id: ViewIndex,
 
     deepest_callback: Callback<Result<EventsResponse, Error>>,
     deepest_task: Option<FetchTask>,
@@ -195,7 +197,7 @@ pub struct PgView {
 }
 
 impl PgView {
-    pub fn new(id: usize, link: &mut ComponentLink<Model>) -> PgView {
+    pub fn new(id: ViewIndex, link: &mut ComponentLink<Model>) -> PgView {
         let session = Arc::new(RwLock::new(PgSession::empty()));
 
         PgView {
@@ -266,7 +268,7 @@ pub enum Msg {
 pub enum UIEvent {
     ChooseCSBackend,
     ChoosePostgresBackend,
-    ViewChoice(usize),
+    ViewChoice(ViewIndex),
     AddView,
     ServerName(html::ChangeData),
     RoomId(html::ChangeData),
@@ -291,40 +293,40 @@ pub enum UICommand {
 
 /// These messages are used by the frontend to send commands to the backend.
 pub enum BkCommand {
-    Connect(usize),
-    ListRooms(usize),
-    JoinRoom(usize),
-    Sync(usize),
+    Connect(ViewIndex),
+    ListRooms(ViewIndex),
+    JoinRoom(ViewIndex),
+    Sync(ViewIndex),
     MoreMsg,
-    LeaveRoom(usize),
-    Disconnect(usize),
+    LeaveRoom(ViewIndex),
+    Disconnect(ViewIndex),
 }
 
 /// These messages are responses from the backend to the frontend.
 pub enum BkResponse {
-    Connected(usize, ConnectionResponse),
-    RoomsList(usize, JoinedRooms),
-    RoomJoined(usize),
-    Synced(usize, SyncResponse),
-    MsgGot(usize, MessagesResponse),
-    RoomLeft(usize),
-    Disconnected(usize),
+    Connected(ViewIndex, ConnectionResponse),
+    RoomsList(ViewIndex, JoinedRooms),
+    RoomJoined(ViewIndex),
+    Synced(ViewIndex, SyncResponse),
+    MsgGot(ViewIndex, MessagesResponse),
+    RoomLeft(ViewIndex),
+    Disconnected(ViewIndex),
 
-    ConnectionFailed(usize),
-    ListingRoomsFailed(usize),
-    JoiningRoomFailed(usize),
-    SyncFailed(usize),
-    MoreMsgFailed(usize),
-    LeavingRoomFailed(usize),
-    DisconnectionFailed(usize),
+    ConnectionFailed(ViewIndex),
+    ListingRoomsFailed(ViewIndex),
+    JoiningRoomFailed(ViewIndex),
+    SyncFailed(ViewIndex),
+    MoreMsgFailed(ViewIndex),
+    LeavingRoomFailed(ViewIndex),
+    DisconnectionFailed(ViewIndex),
 
-    DeepestEvents(usize, EventsResponse),
-    Ancestors(usize, EventsResponse),
-    Descendants(usize, EventsResponse),
+    DeepestEvents(ViewIndex, EventsResponse),
+    Ancestors(ViewIndex, EventsResponse),
+    Descendants(ViewIndex, EventsResponse),
 
-    DeepestRqFailed(usize),
-    AncestorsRqFailed(usize),
-    DescendantsRqFailed(usize),
+    DeepestRqFailed(ViewIndex),
+    AncestorsRqFailed(ViewIndex),
+    DescendantsRqFailed(ViewIndex),
 }
 
 impl Component for Model {
@@ -748,7 +750,7 @@ impl Model {
                     .expect("Couldn't get document element")
                     .try_into()
                     .unwrap();
-                let view_id: usize = view_selection_input
+                let view_id: ViewIndex = view_selection_input
                     .raw_value()
                     .parse()
                     .expect("Failed to parse view_id");
@@ -848,7 +850,7 @@ impl Model {
                     .expect("Couldn't get document element")
                     .try_into()
                     .unwrap();
-                let view_id: usize = view_selection_input
+                let view_id: ViewIndex = view_selection_input
                     .raw_value()
                     .parse()
                     .expect("Failed to parse view_id");
