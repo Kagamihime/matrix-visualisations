@@ -187,6 +187,9 @@ pub struct PgView {
     ancestors_callback: Callback<Result<EventsResponse, Error>>,
     ancestors_task: Option<FetchTask>,
 
+    stop_callback: Callback<Result<(), Error>>,
+    stop_task: Option<FetchTask>,
+
     descendants_callback: Callback<Result<EventsResponse, Error>>,
     descendants_task: Option<FetchTask>,
     descendants_timeout_task: Option<TimeoutTask>,
@@ -227,6 +230,12 @@ impl PgView {
             }),
             descendants_task: None,
             descendants_timeout_task: None,
+
+            stop_callback: link.send_back(move |response: Result<(), Error>| match response {
+                Ok(_) => Msg::BkRes(BkResponse::Disconnected(id)),
+                Err(_) => Msg::BkRes(BkResponse::DisconnectionFailed(id)),
+            }),
+            stop_task: None,
 
             session: session.clone(),
             backend: PostgresBackend::with_session(session),
@@ -912,15 +921,15 @@ impl Model {
                     },
                 },
                 View::Postgres(view) => {
-                    let mut session = view.session.write().unwrap();
+                    if view.session.read().unwrap().connected {
+                        self.console.log("Stopping the backend");
 
-                    if session.connected {
-                        self.console.log("Stopping the reception of new events");
-
-                        session.connected = false;
-                        view.descendants_timeout_task = None;
-                        view.events_dag = None;
-                        self.vis.remove_dag(view_id);
+                        match view.stop_task {
+                            None => {
+                                view.stop_task = Some(view.backend.stop(view.stop_callback.clone()))
+                            }
+                            Some(_) => self.console.log("Already stopping the backend"),
+                        }
                     } else {
                         self.console.log("You were not connected");
                     }
@@ -1086,24 +1095,36 @@ impl Model {
                 }
             }
             BkResponse::Disconnected(view_id) => {
-                self.console.log("Disconnected");
+                match &mut self.views[view_id] {
+                    View::CS(view) => {
+                        self.console.log("Disconnected");
 
-                if let View::CS(view) = &mut self.views[view_id] {
-                    view.sync_task = None; // If a `/sync` request was in progress, cancel it
-                    view.disconnection_task = None;
+                        view.sync_task = None; // If a `/sync` request was in progress, cancel it
+                        view.disconnection_task = None;
 
-                    let mut session = view.session.write().unwrap();
+                        let mut session = view.session.write().unwrap();
 
-                    // Erase the current session data so they won't be erroneously used if the user
-                    // logs in again
-                    session.access_token = None;
-                    session.device_id = None;
-                    session.filter_id = None;
-                    session.next_batch_token = None;
-                    session.prev_batch_token = None;
+                        // Erase the current session data so they won't be erroneously used if the user
+                        // logs in again
+                        session.access_token = None;
+                        session.device_id = None;
+                        session.filter_id = None;
+                        session.next_batch_token = None;
+                        session.prev_batch_token = None;
 
-                    view.events_dag = None;
-                    self.vis.remove_dag(view_id);
+                        view.events_dag = None;
+                        self.vis.remove_dag(view_id);
+                    }
+                    View::Postgres(view) => {
+                        self.console.log("Backend stopped");
+
+                        let mut session = view.session.write().unwrap();
+
+                        session.connected = false;
+                        view.descendants_timeout_task = None;
+                        view.events_dag = None;
+                        self.vis.remove_dag(view_id);
+                    }
                 }
             }
 

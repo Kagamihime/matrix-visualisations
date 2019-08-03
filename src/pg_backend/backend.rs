@@ -100,6 +100,41 @@ impl PostgresBackend {
         self.request(callback, uri)
     }
 
+    pub fn stop(&mut self, callback: Callback<Result<(), Error>>) -> FetchTask {
+        let (server_name, room_id) = {
+            let session = self.session.read().unwrap();
+
+            (session.server_name.clone(), session.room_id.clone())
+        };
+
+        let uri = Uri::builder()
+            .scheme("https")
+            .authority(server_name.as_str())
+            .path_and_query(format!("/visualisations/stop/{}", room_id).as_str())
+            .build()
+            .expect("Failed to build URI.");
+
+        let request = Request::get(uri)
+            .header("Content-Type", "application/json")
+            .body(Nothing)
+            .expect("Failed to buid request.");
+
+        let handler = move |response: Response<Nothing>| {
+            let (meta, _) = response.into_parts();
+
+            if meta.status.is_success() {
+                callback.emit(Ok(()))
+            } else {
+                callback.emit(Err(format_err!(
+                    "{}: error stopping the backend",
+                    meta.status
+                )))
+            }
+        };
+
+        self.fetch.fetch(request, handler.into())
+    }
+
     fn request(
         &mut self,
         callback: Callback<Result<EventsResponse, Error>>,
