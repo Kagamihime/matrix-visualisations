@@ -1118,6 +1118,8 @@ impl Model {
                     View::Postgres(view) => {
                         self.console.log("Backend stopped");
 
+                        view.stop_task = None;
+
                         let mut session = view.session.write().unwrap();
 
                         session.connected = false;
