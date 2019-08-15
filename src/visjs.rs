@@ -8,7 +8,6 @@ use stdweb::Value;
 use crate::model::dag::RoomEvents;
 use crate::model::dag::{DataSet, OrphanInfo};
 use crate::BackendChoice;
-use crate::View;
 
 /// This struct contains the DAG displayed by the application.
 ///
