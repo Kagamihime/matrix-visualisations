@@ -100,6 +100,27 @@ impl PostgresBackend {
         self.request(callback, uri)
     }
 
+    pub fn state(
+        &mut self,
+        callback: Callback<Result<EventsResponse, Error>>,
+        from: &str,
+    ) -> FetchTask {
+        let (server_name, room_id) = {
+            let session = self.session.read().unwrap();
+
+            (session.server_name.clone(), session.room_id.clone())
+        };
+
+        let uri = Uri::builder()
+            .scheme("https")
+            .authority(server_name.as_str())
+            .path_and_query(format!("/visualisations/state/{}?from={}", room_id, from).as_str())
+            .build()
+            .expect("Failed to build URI.");
+
+        self.request(callback, uri)
+    }
+
     pub fn stop(&mut self, callback: Callback<Result<(), Error>>) -> FetchTask {
         let (server_name, room_id) = {
             let session = self.session.read().unwrap();
