@@ -48,6 +48,7 @@ pub struct Model {
     view_idx: ViewIndex,
     views: Vec<View>,
     event_body: Option<String>,
+    room_state: Option<String>,
     fields_choice: FieldsChoice,
 }
 
@@ -194,6 +195,9 @@ pub struct PgView {
     descendants_task: Option<FetchTask>,
     descendants_timeout_task: Option<TimeoutTask>,
 
+    state_callback: Callback<Result<EventsResponse, Error>>,
+    state_task: Option<FetchTask>,
+
     session: Arc<RwLock<PgSession>>,
     backend: PostgresBackend,
     events_dag: Option<Arc<RwLock<RoomEvents>>>,
@@ -230,6 +234,14 @@ impl PgView {
             }),
             descendants_task: None,
             descendants_timeout_task: None,
+
+            state_callback: link.send_back(move |response: Result<EventsResponse, Error>| {
+                match response {
+                    Ok(res) => Msg::BkRes(BkResponse::State(id, res)),
+                    Err(_) => Msg::BkRes(BkResponse::StateRqFailed(id)),
+                }
+            }),
+            state_task: None,
 
             stop_callback: link.send_back(move |response: Result<(), Error>| match response {
                 Ok(_) => Msg::BkRes(BkResponse::Disconnected(id)),
@@ -307,6 +319,7 @@ pub enum BkCommand {
     JoinRoom(ViewIndex),
     Sync(ViewIndex),
     MoreMsg,
+    FetchState,
     LeaveRoom(ViewIndex),
     Disconnect(ViewIndex),
 }
@@ -332,10 +345,12 @@ pub enum BkResponse {
     DeepestEvents(ViewIndex, EventsResponse),
     Ancestors(ViewIndex, EventsResponse),
     Descendants(ViewIndex, EventsResponse),
+    State(ViewIndex, EventsResponse),
 
     DeepestRqFailed(ViewIndex),
     AncestorsRqFailed(ViewIndex),
     DescendantsRqFailed(ViewIndex),
+    StateRqFailed(ViewIndex),
 }
 
 impl Component for Model {
@@ -371,6 +386,7 @@ impl Component for Model {
             view_idx: 0,
             views: default_view,
             event_body: None,
+            room_state: None,
             fields_choice: default_fields_choice,
         }
     }
@@ -790,6 +806,7 @@ impl Model {
             BkCommand::JoinRoom(_) => "Joining the room...",
             BkCommand::Sync(_) => "Syncing...",
             BkCommand::MoreMsg => "Retrieving previous messages...",
+            BkCommand::FetchState => "Fetching the state of the room...",
             BkCommand::LeaveRoom(_) => "Leaving the room...",
             BkCommand::Disconnect(_) => "Disconnecting...",
         };
@@ -893,6 +910,37 @@ impl Model {
                             None => self.console.log("There was no DAG"),
                         },
                         Some(_) => self.console.log("Already fetching ancestors"),
+                    },
+                }
+            }
+            BkCommand::FetchState => {
+                let view_selection_input: web::html_element::InputElement = web::document()
+                    .query_selector("#targeted-view")
+                    .expect("Couldn't get document element")
+                    .expect("Couldn't get document element")
+                    .try_into()
+                    .unwrap();
+                let view_id: ViewIndex = view_selection_input
+                    .raw_value()
+                    .parse()
+                    .expect("Failed to parse view_id");
+
+                let event_id_input: web::html_element::InputElement = web::document()
+                    .query_selector("#selected-event")
+                    .expect("Couldn't get document element")
+                    .expect("Couldn't get document element")
+                    .try_into()
+                    .unwrap();
+                let event_id = event_id_input.raw_value();
+
+                match &mut self.views[view_id] {
+                    View::CS(view) => {}
+                    View::Postgres(view) => match view.state_task {
+                        None => {
+                            view.state_task =
+                                Some(view.backend.state(view.state_callback.clone(), &event_id))
+                        }
+                        Some(_) => self.console.log("Already fetching the state of the room"),
                     },
                 }
             }
@@ -1262,6 +1310,16 @@ impl Model {
                     }
                 }
             }
+            BkResponse::State(view_id, res) => {
+                if let View::Postgres(view) = &mut self.views[view_id] {
+                    view.state_task = None;
+
+                    self.room_state = match serde_json::to_string_pretty(&res) {
+                        Ok(state) => Some(state),
+                        Err(_) => None,
+                    };
+                }
+            }
 
             BkResponse::DeepestRqFailed(view_id) => {
                 self.console
@@ -1286,6 +1344,13 @@ impl Model {
                     view.descendants_task = None;
                 }
             }
+            BkResponse::StateRqFailed(view_id) => {
+                self.console.log("Could not fetch the state of the room");
+
+                if let View::Postgres(view) = &mut self.views[view_id] {
+                    view.state_task = None;
+                }
+            }
         }
     }
 
@@ -1299,6 +1364,21 @@ impl Model {
             None => {
                 html! {
                     <p>{ "No JSON body to show yet" }</p>
+                }
+            }
+        }
+    }
+
+    fn display_room_state(&self) -> Html<Model> {
+        match &self.room_state {
+            Some(room_state) => {
+                html! {
+                    <pre><code>{ room_state }</code></pre>
+                }
+            }
+            None => {
+                html! {
+                    <p>{ "No room state to show yet" }</p>
                 }
             }
         }
@@ -1470,6 +1550,14 @@ impl Renderable<Model> for Model {
                 { self.display_body() }
                 </section>
             </div>
+
+            <section class="state",>
+                <button onclick=|_| Msg::BkCmd(BkCommand::FetchState),>{ "Room state at the selected event" }</button>
+
+                <section id="room-state",>
+                { self.display_room_state() }
+                </section>
+            </section>
         }
     }
 }
