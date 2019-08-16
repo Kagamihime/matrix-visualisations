@@ -118,6 +118,16 @@ pub struct MessagesResponse {
     pub chunk: Vec<JsonValue>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ContextResponse {
+    pub start: String,
+    pub end: String,
+    pub events_before: Vec<JsonValue>,
+    pub event: JsonValue,
+    pub events_after: Vec<JsonValue>,
+    pub state: Vec<JsonValue>,
+}
+
 impl CSBackend {
     /// Creates a new CS backend linked to the given `session`.
     pub fn with_session(session: Arc<RwLock<Session>>) -> Self {
@@ -335,6 +345,56 @@ impl CSBackend {
             .expect("Failed to build request.");
 
         let handler = move |response: Response<Json<Result<MessagesResponse, Error>>>| {
+            let (meta, Json(data)) = response.into_parts();
+
+            if meta.status.is_success() {
+                callback.emit(data)
+            } else {
+                callback.emit(Err(format_err!(
+                    "{}: error retrieving previous messages",
+                    meta.status
+                )))
+            }
+        };
+
+        self.fetch.fetch(request, handler.into())
+    }
+
+    pub fn room_state(
+        &mut self,
+        callback: Callback<Result<ContextResponse, Error>>,
+        event_id: &str,
+    ) -> FetchTask {
+        let (server_name, access_token, room_id) = {
+            let session = self.session.read().unwrap();
+
+            (
+                session.server_name.clone(),
+                session.access_token.clone(),
+                session.room_id.clone(),
+            )
+        };
+
+        let uri = Uri::builder()
+            .scheme("https")
+            .authority(server_name.as_str())
+            .path_and_query(
+                format!(
+                    "/_matrix/client/r0/rooms/{}/context/{}?limit=0",
+                    room_id, event_id,
+                )
+                .as_str(),
+            )
+            .build()
+            .expect("Failed to build URI.");
+
+        let request = Request::get(uri)
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {}", access_token.unwrap()))
+            .body(Nothing)
+            .expect("Failed to build request.");
+
+        let handler = move |response: Response<Json<Result<ContextResponse, Error>>>| {
             let (meta, Json(data)) = response.into_parts();
 
             if meta.status.is_success() {

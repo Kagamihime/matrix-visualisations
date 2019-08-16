@@ -4,6 +4,7 @@ extern crate failure;
 extern crate percent_encoding;
 extern crate petgraph;
 extern crate serde_derive;
+#[macro_use]
 extern crate serde_json;
 #[macro_use]
 extern crate stdweb;
@@ -27,7 +28,7 @@ use yew::services::{ConsoleService, TimeoutService};
 use yew::{html, Callback, Component, ComponentLink, Html, Renderable, ShouldRender};
 
 use cs_backend::backend::{
-    CSBackend, ConnectionResponse, JoinedRooms, MessagesResponse, SyncResponse,
+    CSBackend, ConnectionResponse, ContextResponse, JoinedRooms, MessagesResponse, SyncResponse,
 };
 use cs_backend::session::Session as CSSession;
 use model::dag::RoomEvents;
@@ -93,6 +94,9 @@ pub struct CSView {
     more_msg_callback: Callback<Result<MessagesResponse, Error>>,
     more_msg_task: Option<FetchTask>,
 
+    state_callback: Callback<Result<ContextResponse, Error>>,
+    state_task: Option<FetchTask>,
+
     leaving_room_callback: Callback<Result<(), Error>>,
     leaving_room_task: Option<FetchTask>,
 
@@ -153,6 +157,14 @@ impl CSView {
                 }
             }),
             more_msg_task: None,
+
+            state_callback: link.send_back(move |response: Result<ContextResponse, Error>| {
+                match response {
+                    Ok(res) => Msg::BkRes(BkResponse::StateFetched(id, res)),
+                    Err(_) => Msg::BkRes(BkResponse::FetchStateFailed(id)),
+                }
+            }),
+            state_task: None,
 
             leaving_room_callback: link.send_back(
                 move |response: Result<(), Error>| match response {
@@ -331,6 +343,7 @@ pub enum BkResponse {
     RoomJoined(ViewIndex),
     Synced(ViewIndex, SyncResponse),
     MsgGot(ViewIndex, MessagesResponse),
+    StateFetched(ViewIndex, ContextResponse),
     RoomLeft(ViewIndex),
     Disconnected(ViewIndex),
 
@@ -339,6 +352,7 @@ pub enum BkResponse {
     JoiningRoomFailed(ViewIndex),
     SyncFailed(ViewIndex),
     MoreMsgFailed(ViewIndex),
+    FetchStateFailed(ViewIndex),
     LeavingRoomFailed(ViewIndex),
     DisconnectionFailed(ViewIndex),
 
@@ -934,7 +948,15 @@ impl Model {
                 let event_id = event_id_input.raw_value();
 
                 match &mut self.views[view_id] {
-                    View::CS(view) => {}
+                    View::CS(view) => match view.state_task {
+                        None => {
+                            view.state_task = Some(
+                                view.backend
+                                    .room_state(view.state_callback.clone(), &event_id),
+                            )
+                        }
+                        Some(_) => self.console.log("Already fetching the state of the room"),
+                    },
                     View::Postgres(view) => match view.state_task {
                         None => {
                             view.state_task =
@@ -1130,6 +1152,20 @@ impl Model {
                     }
                 }
             }
+            BkResponse::StateFetched(view_id, res) => {
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.state_task = None;
+
+                    let event_bodies = res.state.clone();
+
+                    let object = json!({ "events": event_bodies });
+
+                    self.room_state = match serde_json::to_string_pretty(&object) {
+                        Ok(state) => Some(state),
+                        Err(_) => None,
+                    }
+                }
+            }
             BkResponse::RoomLeft(view_id) => {
                 if let View::CS(view) = &mut self.views[view_id] {
                     view.leaving_room_task = None;
@@ -1208,6 +1244,13 @@ impl Model {
             }
             BkResponse::MoreMsgFailed(view_id) => {
                 self.console.log("Could not retrieve previous messages");
+
+                if let View::CS(view) = &mut self.views[view_id] {
+                    view.more_msg_task = None;
+                }
+            }
+            BkResponse::FetchStateFailed(view_id) => {
+                self.console.log("Could not fetch the state of the room");
 
                 if let View::CS(view) = &mut self.views[view_id] {
                     view.more_msg_task = None;
