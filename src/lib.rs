@@ -1198,6 +1198,9 @@ impl Model {
 
                         view.events_dag = None;
                         self.vis.remove_dag(view_id);
+
+                        self.event_body = None;
+                        self.room_state = None;
                     }
                     View::Postgres(view) => {
                         self.console.log("Backend stopped");
@@ -1210,6 +1213,9 @@ impl Model {
                         view.descendants_timeout_task = None;
                         view.events_dag = None;
                         self.vis.remove_dag(view_id);
+
+                        self.event_body = None;
+                        self.room_state = None;
                     }
                 }
             }
