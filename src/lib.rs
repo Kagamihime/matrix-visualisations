@@ -1601,7 +1601,9 @@ impl Renderable<Model> for Model {
             </div>
 
             <section class="state",>
-                <button onclick=|_| Msg::BkCmd(BkCommand::FetchState),>{ "Room state at the selected event" }</button>
+                <button onclick=|_| Msg::BkCmd(BkCommand::FetchState), disabled=self.event_body.is_none(),>
+                    { "Room state at the selected event" }
+                </button>
 
                 <section id="room-state",>
                 { self.display_room_state() }
