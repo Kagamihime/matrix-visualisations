@@ -331,7 +331,7 @@ impl VisJsService {
 
             let data = self.data.as_ref().expect("No data set found");
 
-            let mut earlier_events = DataSet::new();
+            let mut earlier_events = DataSet::default();
             events_dag
                 .add_earlier_events_to_data_set(&mut earlier_events, old_earliest_events.clone());
             earlier_events.add_prefix(&format!("subdag_{}_", view_id));
@@ -415,7 +415,7 @@ impl VisJsService {
         if self.latest_events[view_id] != events_dag.latest_events {
             let data = self.data.as_ref().expect("No data set found");
 
-            let mut new_events = DataSet::new();
+            let mut new_events = DataSet::default();
             events_dag.add_new_events_to_data_set(&mut new_events, self.latest_events[0].clone());
             new_events.add_prefix(&format!("subdag_{}_", view_id));
 

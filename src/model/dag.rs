@@ -15,7 +15,6 @@ use super::event::{Event, Field};
 /// The internal representation of the events DAG of the room being observed as well as various
 /// informations and `HashMap`s which makes easier to locate the events.
 pub struct RoomEvents {
-    room_id: String,        // The ID of the room
     server_name: String,    // The name of the server this DAG was retrieved from
     fields: HashSet<Field>, // Events fields which will be included in the labels on the nodes of the vis.js network
 
@@ -36,7 +35,7 @@ pub struct OrphanInfo {
 }
 
 /// The data set containing events which will be added to the vis.js network.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub struct DataSet {
     nodes: Vec<DataSetNode>,
     edges: Vec<DataSetEdge>,
@@ -95,7 +94,6 @@ impl RoomEvents {
                 let timeline = parse_events(&room.timeline.events);
 
                 let mut dag = RoomEvents {
-                    room_id: room_id.to_string(),
                     server_name: server_name.to_string(),
                     fields: fields.clone(),
 
@@ -119,7 +117,6 @@ impl RoomEvents {
     }
 
     pub fn from_deepest_events(
-        room_id: &str,
         server_name: &str,
         fields: &HashSet<Field>,
         res: EventsResponse,
@@ -127,7 +124,6 @@ impl RoomEvents {
         let events = parse_events(&res.events);
 
         let mut dag = RoomEvents {
-            room_id: room_id.to_string(),
             server_name: server_name.to_string(),
             fields: fields.clone(),
 
@@ -192,7 +188,7 @@ impl RoomEvents {
                 .get_prev_events()
                 .iter()
                 .filter(|id| self.events_map.get(**id).is_some()) // Only take into account events which are really in the DAG
-                .map(|id| *self.events_map.get(*id).unwrap())
+                .map(|id| self.events_map[*id])
                 .collect();
 
             for dst_idx in prev_indices {
@@ -290,10 +286,7 @@ impl RoomEvents {
     /// Adds to `data_set` every events in the DAG which are earlier than the events which IDs are
     /// in `from`.
     pub fn add_earlier_events_to_data_set(&self, data_set: &mut DataSet, from: Vec<String>) {
-        let from_indices: HashSet<NodeIndex> = from
-            .iter()
-            .map(|id| *self.events_map.get(id).unwrap())
-            .collect();
+        let from_indices: HashSet<NodeIndex> = from.iter().map(|id| self.events_map[id]).collect();
 
         let (new_node_indices, new_edges) = new_nodes_edges(&self.dag, from_indices);
 
@@ -320,10 +313,7 @@ impl RoomEvents {
         let mut rev_dag = self.dag.clone();
         rev_dag.reverse();
 
-        let from_indices: HashSet<NodeIndex> = from
-            .iter()
-            .map(|id| *self.events_map.get(id).unwrap())
-            .collect();
+        let from_indices: HashSet<NodeIndex> = from.iter().map(|id| self.events_map[id]).collect();
 
         let (new_node_indices, rev_new_edges) = new_nodes_edges(&rev_dag, from_indices);
 
@@ -366,24 +356,17 @@ impl RoomEvents {
     }
 }
 
-impl DataSet {
-    pub fn new() -> DataSet {
-        DataSet {
-            nodes: Vec::new(),
-            edges: Vec::new(),
-        }
-    }
-}
-
 // Parses a list of events encoded as JSON values.
-fn parse_events(json_events: &Vec<JsonValue>) -> Vec<Event> {
+fn parse_events(json_events: &[JsonValue]) -> Vec<Event> {
     json_events
         .iter()
         .map(|ev| {
-            serde_json::from_value(ev.clone()).expect(&format!(
-                "Failed to parse event:\n{}",
-                serde_json::to_string_pretty(&ev).expect("Failed to fail..."),
-            ))
+            serde_json::from_value(ev.clone()).unwrap_or_else(|_| {
+                panic!(
+                    "Failed to parse event:\n{}",
+                    serde_json::to_string_pretty(&ev).expect("Failed to fail...")
+                )
+            })
         })
         .collect()
 }
@@ -392,7 +375,7 @@ fn new_nodes_edges(
     dag: &Graph<Event, ()>,
     from_indices: HashSet<NodeIndex>,
 ) -> (HashSet<NodeIndex>, HashSet<(NodeIndex, NodeIndex)>) {
-    let mut node_indices: HashSet<NodeIndex> = HashSet::from_iter(from_indices.iter().map(|i| *i));
+    let mut node_indices: HashSet<NodeIndex> = HashSet::from_iter(from_indices.iter().cloned());
 
     for &from_idx in from_indices.iter() {
         let mut bfs = Bfs::new(&dag, from_idx);
@@ -402,10 +385,8 @@ fn new_nodes_edges(
         }
     }
 
-    let new_node_indices: HashSet<NodeIndex> = node_indices
-        .difference(&from_indices)
-        .map(|idx| *idx)
-        .collect();
+    let new_node_indices: HashSet<NodeIndex> =
+        node_indices.difference(&from_indices).cloned().collect();
 
     let mut new_edges: HashSet<(NodeIndex, NodeIndex)> = HashSet::new();
 

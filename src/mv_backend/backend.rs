@@ -47,7 +47,7 @@ impl MatrixVisualisationsBackend {
     pub fn ancestors(
         &mut self,
         callback: Callback<Result<EventsResponse, Error>>,
-        from: &Vec<String>,
+        from: &[String],
     ) -> FetchTask {
         let (server_name, room_id) = {
             let session = self.session.read().unwrap();
@@ -75,7 +75,7 @@ impl MatrixVisualisationsBackend {
     pub fn descendants(
         &mut self,
         callback: Callback<Result<EventsResponse, Error>>,
-        from: &Vec<String>,
+        from: &[String],
     ) -> FetchTask {
         let (server_name, room_id) = {
             let session = self.session.read().unwrap();
