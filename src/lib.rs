@@ -396,7 +396,7 @@ impl Component for Model {
 
             link,
 
-            bk_type: bk_type,
+            bk_type,
             view_idx: 0,
             views: default_view,
             event_body: None,
@@ -1281,7 +1281,6 @@ impl Model {
 
                     view.events_dag = Some(Arc::new(RwLock::new(
                         model::dag::RoomEvents::from_deepest_events(
-                            &session.room_id,
                             &session.server_name,
                             &self.fields_choice.fields,
                             res,
