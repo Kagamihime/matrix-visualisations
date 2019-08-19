@@ -12,7 +12,7 @@ extern crate yew;
 
 mod cs_backend;
 mod model;
-mod pg_backend;
+mod mv_backend;
 mod visjs;
 
 use std::collections::HashSet;
@@ -33,8 +33,8 @@ use cs_backend::backend::{
 use cs_backend::session::Session as CSSession;
 use model::dag::RoomEvents;
 use model::event::Field;
-use pg_backend::backend::{EventsResponse, PostgresBackend};
-use pg_backend::session::Session as PgSession;
+use mv_backend::backend::{EventsResponse, MatrixVisualisationsBackend};
+use mv_backend::session::Session as MVSession;
 use visjs::VisJsService;
 
 pub type ViewIndex = usize;
@@ -55,21 +55,21 @@ pub struct Model {
 
 pub enum View {
     CS(CSView),
-    Postgres(PgView),
+    MV(MVView),
 }
 
 impl View {
     pub fn get_id(&self) -> ViewIndex {
         match self {
             View::CS(v) => v.id,
-            View::Postgres(v) => v.id,
+            View::MV(v) => v.id,
         }
     }
 
     pub fn get_events_dag(&self) -> &Option<Arc<RwLock<RoomEvents>>> {
         match self {
             View::CS(v) => &v.events_dag,
-            View::Postgres(v) => &v.events_dag,
+            View::MV(v) => &v.events_dag,
         }
     }
 }
@@ -190,8 +190,8 @@ impl CSView {
 }
 
 // This contains every informations needed for the observation of a room from a given HS by using
-// the PostgreSQL backend.
-pub struct PgView {
+// the Matrix Visualisations' backend.
+pub struct MVView {
     id: ViewIndex,
 
     deepest_callback: Callback<Result<EventsResponse, Error>>,
@@ -210,16 +210,16 @@ pub struct PgView {
     state_callback: Callback<Result<EventsResponse, Error>>,
     state_task: Option<FetchTask>,
 
-    session: Arc<RwLock<PgSession>>,
-    backend: PostgresBackend,
+    session: Arc<RwLock<MVSession>>,
+    backend: MatrixVisualisationsBackend,
     events_dag: Option<Arc<RwLock<RoomEvents>>>,
 }
 
-impl PgView {
-    pub fn new(id: ViewIndex, link: &mut ComponentLink<Model>) -> PgView {
-        let session = Arc::new(RwLock::new(PgSession::empty()));
+impl MVView {
+    pub fn new(id: ViewIndex, link: &mut ComponentLink<Model>) -> MVView {
+        let session = Arc::new(RwLock::new(MVSession::empty()));
 
-        PgView {
+        MVView {
             id,
 
             deepest_callback: link.send_back(move |response: Result<EventsResponse, Error>| {
@@ -262,7 +262,7 @@ impl PgView {
             stop_task: None,
 
             session: session.clone(),
-            backend: PostgresBackend::with_session(session),
+            backend: MatrixVisualisationsBackend::with_session(session),
             events_dag: None,
         }
     }
@@ -272,7 +272,7 @@ impl PgView {
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum BackendChoice {
     CS,
-    Postgres,
+    MV,
 }
 
 // This defines which fields of the event body will be displayed in the nodes of the displayed DAG.
@@ -300,7 +300,7 @@ pub enum Msg {
 /// These messages notifies the application of changes in the data modifiable via the UI.
 pub enum UIEvent {
     ChooseCSBackend,
-    ChoosePostgresBackend,
+    ChooseMVBackend,
     ViewChoice(ViewIndex),
     AddView,
     ServerName(html::ChangeData),
@@ -430,12 +430,12 @@ impl Model {
                     .collect();
 
                 for (old_view, new_view) in self.views.iter().zip(new_views.iter_mut()) {
-                    if let View::Postgres(old_view) = old_view {
-                        let pg_session = old_view.session.read().unwrap();
+                    if let View::MV(old_view) = old_view {
+                        let mv_session = old_view.session.read().unwrap();
                         let mut new_session = new_view.session.write().unwrap();
 
-                        new_session.server_name = pg_session.server_name.clone();
-                        new_session.room_id = pg_session.room_id.clone();
+                        new_session.server_name = mv_session.server_name.clone();
+                        new_session.room_id = mv_session.room_id.clone();
                     }
                 }
 
@@ -443,11 +443,11 @@ impl Model {
 
                 self.views = new_views;
             }
-            UIEvent::ChoosePostgresBackend => {
-                *self.bk_type.write().unwrap() = BackendChoice::Postgres;
+            UIEvent::ChooseMVBackend => {
+                *self.bk_type.write().unwrap() = BackendChoice::MV;
 
-                let mut new_views: Vec<PgView> = (0..self.views.len())
-                    .map(|id| PgView::new(id, &mut self.link))
+                let mut new_views: Vec<MVView> = (0..self.views.len())
+                    .map(|id| MVView::new(id, &mut self.link))
                     .collect();
 
                 for (old_view, new_view) in self.views.iter().zip(new_views.iter_mut()) {
@@ -460,10 +460,7 @@ impl Model {
                     }
                 }
 
-                let new_views = new_views
-                    .into_iter()
-                    .map(|view| View::Postgres(view))
-                    .collect();
+                let new_views = new_views.into_iter().map(|view| View::MV(view)).collect();
 
                 self.views = new_views;
             }
@@ -507,9 +504,7 @@ impl Model {
             UIEvent::AddView => {
                 let view = match *self.bk_type.read().unwrap() {
                     BackendChoice::CS => View::CS(CSView::new(self.views.len(), &mut self.link)),
-                    BackendChoice::Postgres => {
-                        View::Postgres(PgView::new(self.views.len(), &mut self.link))
-                    }
+                    BackendChoice::MV => View::MV(MVView::new(self.views.len(), &mut self.link)),
                 };
 
                 self.views.push(view);
@@ -520,7 +515,7 @@ impl Model {
                 if let html::ChangeData::Value(sn) = sn {
                     match &self.views[self.view_idx] {
                         View::CS(view) => view.session.write().unwrap().server_name = sn,
-                        View::Postgres(view) => view.session.write().unwrap().server_name = sn,
+                        View::MV(view) => view.session.write().unwrap().server_name = sn,
                     }
                 }
             }
@@ -531,7 +526,7 @@ impl Model {
                             View::CS(view) => {
                                 view.session.write().unwrap().room_id = ri.clone();
                             }
-                            View::Postgres(view) => {
+                            View::MV(view) => {
                                 view.session.write().unwrap().room_id = ri.clone();
                             }
                         }
@@ -840,7 +835,7 @@ impl Model {
                     },
                     Some(_) => self.console.log("You are already connected"),
                 },
-                View::Postgres(view) => match view.events_dag {
+                View::MV(view) => match view.events_dag {
                     None => match view.deepest_task {
                         None => {
                             view.deepest_task =
@@ -872,7 +867,7 @@ impl Model {
                             .sync(view.sync_callback.clone(), next_batch_token),
                     )
                 }
-                View::Postgres(view) => {
+                View::MV(view) => {
                     if let Some(dag) = &view.events_dag {
                         let from = &dag.read().unwrap().latest_events;
 
@@ -905,7 +900,7 @@ impl Model {
                         }
                         Some(_) => self.console.log("Already fetching previous messages"),
                     },
-                    View::Postgres(view) => match view.ancestors_task {
+                    View::MV(view) => match view.ancestors_task {
                         None => match &view.events_dag {
                             Some(_) => {
                                 let input: web::html_element::InputElement = web::document()
@@ -957,7 +952,7 @@ impl Model {
                         }
                         Some(_) => self.console.log("Already fetching the state of the room"),
                     },
-                    View::Postgres(view) => match view.state_task {
+                    View::MV(view) => match view.state_task {
                         None => {
                             view.state_task =
                                 Some(view.backend.state(view.state_callback.clone(), &event_id))
@@ -990,7 +985,7 @@ impl Model {
                         Some(_) => self.console.log("Already disconnecting"),
                     },
                 },
-                View::Postgres(view) => {
+                View::MV(view) => {
                     if view.session.read().unwrap().connected {
                         self.console.log("Stopping the backend");
 
@@ -1202,7 +1197,7 @@ impl Model {
                         self.event_body = None;
                         self.room_state = None;
                     }
-                    View::Postgres(view) => {
+                    View::MV(view) => {
                         self.console.log("Backend stopped");
 
                         view.stop_task = None;
@@ -1278,7 +1273,7 @@ impl Model {
             }
 
             BkResponse::DeepestEvents(view_id, res) => {
-                if let View::Postgres(view) = &mut self.views[view_id] {
+                if let View::MV(view) = &mut self.views[view_id] {
                     view.deepest_task = None;
 
                     let mut session = view.session.write().unwrap();
@@ -1322,7 +1317,7 @@ impl Model {
                 }
             }
             BkResponse::Ancestors(view_id, res) => {
-                if let View::Postgres(view) = &mut self.views[view_id] {
+                if let View::MV(view) = &mut self.views[view_id] {
                     view.ancestors_task = None;
 
                     match view.events_dag.clone() {
@@ -1337,7 +1332,7 @@ impl Model {
                 }
             }
             BkResponse::Descendants(view_id, res) => {
-                if let View::Postgres(view) = &mut self.views[view_id] {
+                if let View::MV(view) = &mut self.views[view_id] {
                     view.descendants_task = None;
 
                     match view.events_dag.clone() {
@@ -1360,7 +1355,7 @@ impl Model {
                 }
             }
             BkResponse::State(view_id, res) => {
-                if let View::Postgres(view) = &mut self.views[view_id] {
+                if let View::MV(view) = &mut self.views[view_id] {
                     view.state_task = None;
 
                     self.room_state = match serde_json::to_string_pretty(&res) {
@@ -1374,14 +1369,14 @@ impl Model {
                 self.console
                     .log("Could not retrieve the room's deepest events");
 
-                if let View::Postgres(view) = &mut self.views[view_id] {
+                if let View::MV(view) = &mut self.views[view_id] {
                     view.deepest_task = None;
                 }
             }
             BkResponse::AncestorsRqFailed(view_id) => {
                 self.console.log("Could not retrieve the events' ancestors");
 
-                if let View::Postgres(view) = &mut self.views[view_id] {
+                if let View::MV(view) = &mut self.views[view_id] {
                     view.ancestors_task = None;
                 }
             }
@@ -1389,14 +1384,14 @@ impl Model {
                 self.console
                     .log("Could not retrieve the events' descendants");
 
-                if let View::Postgres(view) = &mut self.views[view_id] {
+                if let View::MV(view) = &mut self.views[view_id] {
                     view.descendants_task = None;
                 }
             }
             BkResponse::StateRqFailed(view_id) => {
                 self.console.log("Could not fetch the state of the room");
 
-                if let View::Postgres(view) = &mut self.views[view_id] {
+                if let View::MV(view) = &mut self.views[view_id] {
                     view.state_task = None;
                 }
             }
@@ -1438,7 +1433,7 @@ impl Model {
 
         let connected = self.views.iter().any(|view| match view {
             View::CS(view) => view.session.read().unwrap().access_token.is_some(),
-            View::Postgres(view) => view.session.read().unwrap().connected,
+            View::MV(view) => view.session.read().unwrap().connected,
         });
 
         if !connected {
@@ -1446,8 +1441,8 @@ impl Model {
                 <>
                     <input type="radio", id="cs-bk", name="bk-type", value="cs-bk", checked=(bk_type == BackendChoice::CS), onclick=|_| Msg::UI(UIEvent::ChooseCSBackend),/>
                     <label for="cs-bk",>{ "CS backend" }</label>
-                    <input type="radio", id="pg-bk", name="bk-type", value="pg-bk", checked=(bk_type == BackendChoice::Postgres), onclick=|_| Msg::UI(UIEvent::ChoosePostgresBackend),/>
-                    <label for="pg-bk",>{ "Synapse PostgreSQL backend" }</label>
+                    <input type="radio", id="mv-bk", name="bk-type", value="mv-bk", checked=(bk_type == BackendChoice::MV), onclick=|_| Msg::UI(UIEvent::ChooseMVBackend),/>
+                    <label for="mv-bk",>{ "Matrix Visualisations backend" }</label>
                 </>
             }
         } else {
@@ -1498,7 +1493,7 @@ impl Model {
                     </ul>
                 }
             }
-            BackendChoice::Postgres => {
+            BackendChoice::MV => {
                 html! {
                     <ul>
                         <li>{ "Server name: " }<input type="text", id="server-name-input", onchange=|e| Msg::UI(UIEvent::ServerName(e)),/></li>

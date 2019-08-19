@@ -9,7 +9,7 @@ use yew::services::fetch::{FetchService, FetchTask, Request, Response, Uri};
 
 use super::session::Session;
 
-pub struct PostgresBackend {
+pub struct MatrixVisualisationsBackend {
     fetch: FetchService,
     session: Arc<RwLock<Session>>,
 }
@@ -19,9 +19,9 @@ pub struct EventsResponse {
     pub events: Vec<JsonValue>,
 }
 
-impl PostgresBackend {
+impl MatrixVisualisationsBackend {
     pub fn with_session(session: Arc<RwLock<Session>>) -> Self {
-        PostgresBackend {
+        MatrixVisualisationsBackend {
             fetch: FetchService::new(),
             session,
         }
