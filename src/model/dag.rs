@@ -8,7 +8,7 @@ use serde_derive::Serialize;
 use serde_json::Value as JsonValue;
 
 use crate::cs_backend::backend::SyncResponse;
-use crate::pg_backend::backend::EventsResponse;
+use crate::mv_backend::backend::EventsResponse;
 
 use super::event::{Event, Field};
 

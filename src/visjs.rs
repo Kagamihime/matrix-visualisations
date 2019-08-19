@@ -257,7 +257,7 @@ impl VisJsService {
                     return data;
                 });
             }
-            BackendChoice::Postgres => {
+            BackendChoice::MV => {
                 self.data = Some(js! {
                     var view_id = @{view_id};
                     var data = @{data};
@@ -376,7 +376,7 @@ impl VisJsService {
                         return data;
                     });
                 }
-                BackendChoice::Postgres => {
+                BackendChoice::MV => {
                     self.data = Some(js! {
                         var view_id = @{view_id};
                         var data = @{data};
